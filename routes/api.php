@@ -14,6 +14,8 @@ use App\Http\Controllers\Api\SalePaymentController;
 use App\Http\Controllers\Api\FinancialAccountController;
 use App\Http\Controllers\Api\InventoryReportController;
 use App\Http\Controllers\Api\InventoryMovementReportController;
+use App\Http\Controllers\Api\PurchaseReturnController;
+use App\Http\Controllers\Api\SaleReturnController;
 // Public authentication routes
 Route::prefix('auth')->group(function () {
     Route::post('/register', [AuthController::class, 'register']);
@@ -118,3 +120,19 @@ Route::middleware(['auth:sanctum', 'role:Secretary'])
         '/reports/inventory-movements',
         [InventoryMovementReportController::class, 'index']
     );
+    // Secretary-only purchase returns
+Route::middleware(['auth:sanctum', 'role:Secretary'])
+    ->prefix('purchase-returns')
+    ->group(function () {
+        Route::get('/', [PurchaseReturnController::class, 'index']);
+        Route::post('/', [PurchaseReturnController::class, 'store']);
+        Route::get('/{id}', [PurchaseReturnController::class, 'show']);
+    });
+    // Secretary-only sale returns
+Route::middleware(['auth:sanctum', 'role:Secretary'])
+    ->prefix('sale-returns')
+    ->group(function () {
+        Route::get('/', [SaleReturnController::class, 'index']);
+        Route::post('/', [SaleReturnController::class, 'store']);
+        Route::get('/{id}', [SaleReturnController::class, 'show']);
+    });
