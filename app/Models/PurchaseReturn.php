@@ -69,4 +69,8 @@ class PurchaseReturn extends Model
     {
         return $this->hasMany(PurchaseReturnItem::class);
     }
+    public function settlements(): HasMany
+{
+    return $this->hasMany(PurchaseReturnSettlement::class);
+}
 }
