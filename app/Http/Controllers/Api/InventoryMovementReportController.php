@@ -110,7 +110,9 @@ class InventoryMovementReportController extends Controller
             'total_movements' => (clone $summaryQuery)->count(),
             'total_quantity_in' => (clone $summaryQuery)->sum('quantity_in'),
             'total_quantity_out' => (clone $summaryQuery)->sum('quantity_out'),
-            'total_cost_in' => (clone $summaryQuery)->sum('total_cost'),
+            'total_cost_in' => (clone $summaryQuery)
+    ->where('quantity_in', '>', 0)
+    ->sum('total_cost'),
         ];
 
         return response()->json([
