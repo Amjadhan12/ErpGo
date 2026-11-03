@@ -167,9 +167,17 @@ class SupplierPaymentController extends Controller
                 ")
                 ->first();
 
-            $outstandingBalance =
-                (float) $supplierTotals->total_credit
-                - (float) $supplierTotals->total_debit;
+           $openingBalance = (float) \App\Models\PartnerOpeningBalance::where(
+    'business_partner_id',
+    $supplier->id
+)
+    ->where('currency_id', $currency->id)
+    ->whereDate('opening_date', '<=', $validated['payment_date'])
+    ->sum('amount');
+
+$outstandingBalance = $openingBalance
+    + (float) $supplierTotals->total_credit
+    - (float) $supplierTotals->total_debit;
 
             if ((float) $validated['amount'] > $outstandingBalance) {
                 throw ValidationException::withMessages([
