@@ -1,0 +1,120 @@
+<?php
+
+use App\Http\Controllers\Api\AuthController;
+use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Route;
+use App\Http\Controllers\Api\OpeningBalanceController;
+use App\Http\Controllers\Api\BusinessPartnerController;
+use App\Http\Controllers\Api\PartnerOpeningBalanceController;
+use App\Http\Controllers\Api\PartnerBalanceReportController;
+use App\Http\Controllers\Api\SupplierPaymentController;
+use App\Http\Controllers\Api\PurchaseController;
+use App\Http\Controllers\Api\SaleController;
+use App\Http\Controllers\Api\SalePaymentController;
+use App\Http\Controllers\Api\FinancialAccountController;
+use App\Http\Controllers\Api\InventoryReportController;
+use App\Http\Controllers\Api\InventoryMovementReportController;
+// Public authentication routes
+Route::prefix('auth')->group(function () {
+    Route::post('/register', [AuthController::class, 'register']);
+    Route::post('/login', [AuthController::class, 'login']);
+});
+
+// Routes requiring authentication
+Route::middleware('auth:sanctum')->prefix('auth')->group(function () {
+    Route::get('/user', [AuthController::class, 'user']);
+    Route::post('/logout', [AuthController::class, 'logout']);
+});
+
+// Secretary-only test route
+Route::middleware(['auth:sanctum', 'role:Secretary'])
+    ->get('/secretary-check', function (Request $request) {
+        return response()->json([
+            'message' => 'Secretary access granted.',
+            'user' => $request->user(),
+        ]);
+    });
+
+// Customer-only test route
+Route::middleware(['auth:sanctum', 'role:Customer'])
+    ->get('/customer-check', function (Request $request) {
+        return response()->json([
+            'message' => 'Customer access granted.',
+            'user' => $request->user(),
+        ]);
+    }); 
+// Secretary-only opening balance management
+Route::middleware(['auth:sanctum', 'role:Secretary'])
+    ->prefix('opening-balances')
+    ->group(function () {
+        Route::get('/', [OpeningBalanceController::class, 'index']);
+        Route::post('/', [OpeningBalanceController::class, 'store']);
+    });
+
+    Route::middleware(['auth:sanctum', 'role:Secretary'])
+    ->prefix('business-partners')
+    ->group(function () {
+        Route::get('/', [BusinessPartnerController::class, 'index']);
+        Route::post('/', [BusinessPartnerController::class, 'store']);
+        Route::get('/{businessPartner}', [BusinessPartnerController::class, 'show']);
+        Route::put('/{businessPartner}', [BusinessPartnerController::class, 'update']);
+        Route::patch('/{businessPartner}', [BusinessPartnerController::class, 'update']);
+        Route::delete('/{businessPartner}', [BusinessPartnerController::class, 'destroy']);
+    });
+    Route::middleware(['auth:sanctum', 'role:Secretary'])
+    ->prefix('partner-opening-balances')
+    ->group(function () {
+        Route::get('/', [PartnerOpeningBalanceController::class, 'index']);
+        Route::post('/', [PartnerOpeningBalanceController::class, 'store']);
+    });
+    Route::middleware(['auth:sanctum', 'role:Secretary'])
+    ->get(
+        '/reports/partner-balances',
+        [PartnerBalanceReportController::class, 'index']
+    );
+
+    Route::middleware(['auth:sanctum', 'role:Secretary'])
+    ->prefix('purchases')
+    ->group(function () {
+        Route::get('/', [PurchaseController::class, 'index']);
+        Route::post('/', [PurchaseController::class, 'store']);
+    });
+    Route::middleware(['auth:sanctum', 'role:Secretary'])
+    ->prefix('supplier-payments')
+    ->group(function () {
+        Route::get('/', [SupplierPaymentController::class, 'index']);
+        Route::post('/', [SupplierPaymentController::class, 'store']);
+    });
+    // Secretary-only sales management
+Route::middleware(['auth:sanctum', 'role:Secretary'])
+    ->prefix('sales')
+    ->group(function () {
+        Route::get('/', [SaleController::class, 'index']);
+        Route::post('/', [SaleController::class, 'store']);
+        Route::get('/{id}', [SaleController::class, 'show']);
+    });
+
+// Secretary-only sale payments
+Route::middleware(['auth:sanctum', 'role:Secretary'])
+    ->prefix('sale-payments')
+    ->group(function () {
+        Route::get('/', [SalePaymentController::class, 'index']);
+        Route::post('/', [SalePaymentController::class, 'store']);
+    });
+    // Secretary-only financial account balances
+Route::middleware(['auth:sanctum', 'role:Secretary'])
+    ->get(
+        '/financial-accounts/balances',
+        [FinancialAccountController::class, 'balances']
+    );
+    // Secretary-only inventory report
+Route::middleware(['auth:sanctum', 'role:Secretary'])
+    ->get(
+        '/reports/inventory',
+        [InventoryReportController::class, 'index']
+    );
+    Route::middleware(['auth:sanctum', 'role:Secretary'])
+    ->get(
+        '/reports/inventory-movements',
+        [InventoryMovementReportController::class, 'index']
+    );
