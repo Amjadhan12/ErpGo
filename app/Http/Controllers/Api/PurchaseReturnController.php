@@ -207,12 +207,13 @@ class PurchaseReturnController extends Controller
                     'notes' => $line['notes'],
                 ]);
 
-          $oldQuantity = (float) $balance->quantity;
+        $balance = $line['balance'];
+
+$oldQuantity = (float) $balance->quantity;
 $oldAverageCost = (float) $balance->average_unit_cost;
 
 $newQuantity = $oldQuantity - $line['quantity'];
 
-// د Stock د کمېدو لګښت باید د Update څخه مخکې محاسبه شي
 $inventoryCost = round(
     $line['quantity'] * $oldAverageCost,
     4
@@ -224,6 +225,7 @@ $balance->update([
         ? $oldAverageCost
         : 0,
 ]);
+
 
                 InventoryMovement::create([
                     'warehouse_id' => $purchase->warehouse_id,
