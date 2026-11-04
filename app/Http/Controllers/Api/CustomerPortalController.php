@@ -132,4 +132,69 @@ class CustomerPortalController extends Controller
         ],
     ]);
 }
+public function transactions(Request $request): JsonResponse
+{
+    $user = $request->user();
+    $partner = $user->businessPartner;
+
+    if (!$partner || !$partner->is_active) {
+        return response()->json([
+            'message' => 'Customer account not found or inactive.',
+        ], 404);
+    }
+
+    $validated = $request->validate([
+        'from_date' => ['nullable', 'date_format:Y-m-d'],
+        'to_date' => ['nullable', 'date_format:Y-m-d', 'after_or_equal:from_date'],
+        'transaction_type' => ['nullable', 'string', 'max:50'],
+        'per_page' => ['nullable', 'integer', 'min:1', 'max:100'],
+    ]);
+
+    $query = $partner->transactions()
+        ->with('currency:id,code,name,symbol')
+        ->when(
+            !empty($validated['from_date']),
+            fn ($q) => $q->whereDate(
+                'transaction_date',
+                '>=',
+                $validated['from_date']
+            )
+        )
+        ->when(
+            !empty($validated['to_date']),
+            fn ($q) => $q->whereDate(
+                'transaction_date',
+                '<=',
+                $validated['to_date']
+            )
+        )
+        ->when(
+            !empty($validated['transaction_type']),
+            fn ($q) => $q->where(
+                'transaction_type',
+                $validated['transaction_type']
+            )
+        )
+        ->orderByDesc('transaction_date')
+        ->orderByDesc('id');
+
+    $transactions = $query->paginate(
+        $validated['per_page'] ?? 20
+    );
+
+    $openingBalances = $partner->openingBalances()
+        ->with('currency:id,code,name,symbol')
+        ->orderBy('opening_date')
+        ->get();
+
+    return response()->json([
+        'message' => 'Customer transactions retrieved successfully.',
+        'data' => [
+            'customer_id' => $partner->id,
+            'customer_name' => $partner->name,
+            'opening_balances' => $openingBalances,
+            'transactions' => $transactions,
+        ],
+    ]);
+}
 }
