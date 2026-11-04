@@ -9,6 +9,9 @@ use Illuminate\Http\Request;
 
 class FinancialAccountController extends Controller
 {
+    /**
+     * Get financial account balances.
+     */
     public function balances(Request $request): JsonResponse
     {
         $accounts = FinancialAccount::query()
@@ -67,5 +70,38 @@ class FinancialAccountController extends Controller
                 'accounts_count' => $data->count(),
             ],
         ]);
+    }
+
+    /**
+     * Create a new financial account.
+     */
+    public function store(Request $request): JsonResponse
+    {
+        $validated = $request->validate([
+            'currency_id' => ['required', 'integer', 'exists:currencies,id'],
+            'name' => ['required', 'string', 'max:150'],
+            'account_type' => ['required', 'string', 'max:30'],
+            'holder_type' => ['nullable', 'string', 'max:30'],
+            'location' => ['nullable', 'string', 'max:150'],
+            'account_number' => ['nullable', 'string', 'max:100'],
+            'notes' => ['nullable', 'string'],
+            'is_active' => ['sometimes', 'boolean'],
+        ]);
+
+        $account = FinancialAccount::create([
+            'currency_id' => $validated['currency_id'],
+            'name' => $validated['name'],
+            'account_type' => $validated['account_type'],
+            'holder_type' => $validated['holder_type'] ?? 'company',
+            'location' => $validated['location'] ?? null,
+            'account_number' => $validated['account_number'] ?? null,
+            'notes' => $validated['notes'] ?? null,
+            'is_active' => $validated['is_active'] ?? true,
+        ]);
+
+        return response()->json([
+            'message' => 'Financial account created successfully.',
+            'data' => $account->load('currency'),
+        ], 201);
     }
 }

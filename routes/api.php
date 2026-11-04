@@ -21,6 +21,7 @@ use App\Http\Controllers\Api\SaleReturnSettlementController;
 use App\Http\Controllers\Api\ExpenseCategoryController;
 use App\Http\Controllers\Api\ExpenseController;
 use App\Http\Controllers\Api\CashTransferController;
+use App\Http\Controllers\Api\DailyBookNoteController;
 // Public authentication routes
 Route::prefix('auth')->group(function () {
     Route::post('/register', [AuthController::class, 'register']);
@@ -114,6 +115,12 @@ Route::middleware(['auth:sanctum', 'role:Secretary'])
         '/financial-accounts/balances',
         [FinancialAccountController::class, 'balances']
     );
+    // Secretary-only financial account creation
+Route::middleware(['auth:sanctum', 'role:Secretary'])
+    ->post(
+        '/financial-accounts',
+        [FinancialAccountController::class, 'store']
+    );
     // Secretary-only inventory report
 Route::middleware(['auth:sanctum', 'role:Secretary'])
     ->get(
@@ -183,4 +190,16 @@ Route::middleware(['auth:sanctum', 'role:Secretary'])
         Route::get('/', [CashTransferController::class, 'index']);
         Route::post('/', [CashTransferController::class, 'store']);
         Route::get('/{id}', [CashTransferController::class, 'show']);
+    });
+    // Daily Book Notes - Secretary Only
+Route::middleware(['auth:sanctum', 'role:Secretary'])
+    ->prefix('daily-book-notes')
+    ->controller(DailyBookNoteController::class)
+    ->group(function () {
+        Route::get('/', 'index');
+        Route::post('/', 'store');
+        Route::get('/{dailyBookNote}', 'show');
+        Route::put('/{dailyBookNote}', 'update');
+        Route::patch('/{dailyBookNote}', 'update');
+        Route::delete('/{dailyBookNote}', 'destroy');
     });
