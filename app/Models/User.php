@@ -7,6 +7,7 @@ use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Foundation\Auth\User as Authenticatable;
 use Illuminate\Notifications\Notifiable;
 use Laravel\Sanctum\HasApiTokens;
+use Illuminate\Database\Eloquent\Relations\BelongsTo;
 
 class User extends Authenticatable
 {
@@ -47,4 +48,8 @@ class User extends Authenticatable
             'is_active' => 'boolean',
         ];
     }
+    public function businessPartner(): BelongsTo
+{
+    return $this->belongsTo(BusinessPartner::class);
+}
 }

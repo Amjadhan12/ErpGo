@@ -22,6 +22,7 @@ use App\Http\Controllers\Api\ExpenseCategoryController;
 use App\Http\Controllers\Api\ExpenseController;
 use App\Http\Controllers\Api\CashTransferController;
 use App\Http\Controllers\Api\DailyBookNoteController;
+use App\Http\Controllers\Api\DocumentController;
 // Public authentication routes
 Route::prefix('auth')->group(function () {
     Route::post('/register', [AuthController::class, 'register']);
@@ -202,4 +203,15 @@ Route::middleware(['auth:sanctum', 'role:Secretary'])
         Route::put('/{dailyBookNote}', 'update');
         Route::patch('/{dailyBookNote}', 'update');
         Route::delete('/{dailyBookNote}', 'destroy');
+    });
+// Document Management - Secretary Only
+Route::middleware(['auth:sanctum', 'role:Secretary'])
+    ->prefix('documents')
+    ->controller(DocumentController::class)
+    ->group(function () {
+        Route::get('/', 'index');
+        Route::post('/', 'store');
+        Route::get('/{document}', 'show');
+        Route::get('/{document}/download', 'download');
+        Route::delete('/{document}', 'destroy');
     });

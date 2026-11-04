@@ -6,6 +6,7 @@ use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Database\Eloquent\SoftDeletes;
+use Illuminate\Database\Eloquent\Relations\HasOne;
 
 class BusinessPartner extends Model
 {
@@ -37,5 +38,9 @@ class BusinessPartner extends Model
     public function transactions(): HasMany
 {
     return $this->hasMany(PartnerTransaction::class);
+}
+public function user(): HasOne
+{
+    return $this->hasOne(User::class);
 }
 }

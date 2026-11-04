@@ -56,12 +56,14 @@ class DailyBookNoteController extends Controller
             'note_date' => ['required', 'date'],
         ]);
 
-        $note = DailyBookNote::create([
-            'title' => $validated['title'] ?? null,
-            'details' => $validated['details'],
-            'note_date' => $validated['note_date'],
-            'created_by' => auth()->id(),
-        ]);
+        $note = new DailyBookNote([
+    'title' => $validated['title'] ?? null,
+    'details' => $validated['details'],
+    'note_date' => $validated['note_date'],
+]);
+
+$note->created_by = auth()->id();
+$note->save();
 
         $note->load('creator:id,name');
 

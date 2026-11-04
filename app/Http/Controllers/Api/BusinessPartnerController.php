@@ -7,6 +7,9 @@ use App\Models\BusinessPartner;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Validation\Rule;
+use App\Models\User;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Str;
 
 class BusinessPartnerController extends Controller
 {
@@ -39,27 +42,69 @@ class BusinessPartnerController extends Controller
         ]);
     }
 
-    public function store(Request $request): JsonResponse
-    {
-        $validated = $request->validate([
-            'partner_type' => ['required', Rule::in(['Customer', 'Supplier'])],
-            'name' => ['required', 'string', 'max:255'],
-            'phone' => ['nullable', 'string', 'max:30'],
-            'email' => ['nullable', 'email', 'max:255'],
-            'address' => ['nullable', 'string', 'max:255'],
-            'business_name' => ['nullable', 'string', 'max:255'],
-            'tax_number' => ['nullable', 'string', 'max:255'],
-            'notes' => ['nullable', 'string', 'max:5000'],
-            'is_active' => ['sometimes', 'boolean'],
+ public function store(Request $request): JsonResponse
+{
+    $validated = $request->validate([
+        'partner_type' => ['required', Rule::in(['Customer', 'Supplier'])],
+        'name' => ['required', 'string', 'max:255'],
+        'phone' => ['nullable', 'string', 'max:30'],
+        'email' => [
+            'required',
+            'email',
+            'max:255',
+            'unique:business_partners,email',
+            'unique:users,email',
+        ],
+        'password' => ['required', 'string', 'min:8', 'confirmed'],
+        'address' => ['nullable', 'string', 'max:255'],
+        'business_name' => ['nullable', 'string', 'max:255'],
+        'tax_number' => ['nullable', 'string', 'max:255'],
+        'notes' => ['nullable', 'string', 'max:5000'],
+        'is_active' => ['sometimes', 'boolean'],
+    ]);
+
+    $result = DB::transaction(function () use ($validated) {
+        $partner = BusinessPartner::create([
+            'partner_type' => $validated['partner_type'],
+            'name' => $validated['name'],
+            'phone' => $validated['phone'] ?? null,
+            'email' => $validated['email'],
+            'address' => $validated['address'] ?? null,
+            'business_name' => $validated['business_name'] ?? null,
+            'tax_number' => $validated['tax_number'] ?? null,
+            'notes' => $validated['notes'] ?? null,
+            'is_active' => $validated['is_active'] ?? true,
         ]);
 
-        $partner = BusinessPartner::create($validated);
+        $user = User::create([
+            'name' => $validated['name'],
+            'email' => $validated['email'],
+            'password' => $validated['password'],
+            'role' => $validated['partner_type'],
+            'business_partner_id' => $partner->id,
+            'is_active' => $validated['is_active'] ?? true,
+        ]);
 
-        return response()->json([
-            'message' => 'Business partner created successfully.',
-            'data' => $partner,
-        ], 201);
-    }
+        return [
+            'partner' => $partner,
+            'user' => $user,
+        ];
+    });
+
+    return response()->json([
+        'message' => 'Business partner and login account created successfully.',
+        'data' => [
+            'partner' => $result['partner'],
+            'account' => [
+                'id' => $result['user']->id,
+                'name' => $result['user']->name,
+                'email' => $result['user']->email,
+                'role' => $result['user']->role,
+                'is_active' => $result['user']->is_active,
+            ],
+        ],
+    ], 201);
+}
 
     public function show(BusinessPartner $businessPartner): JsonResponse
     {
