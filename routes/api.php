@@ -18,6 +18,9 @@ use App\Http\Controllers\Api\PurchaseReturnController;
 use App\Http\Controllers\Api\SaleReturnController;
 use App\Http\Controllers\Api\PurchaseReturnSettlementController;
 use App\Http\Controllers\Api\SaleReturnSettlementController;
+use App\Http\Controllers\Api\ExpenseCategoryController;
+use App\Http\Controllers\Api\ExpenseController;
+use App\Http\Controllers\Api\CashTransferController;
 // Public authentication routes
 Route::prefix('auth')->group(function () {
     Route::post('/register', [AuthController::class, 'register']);
@@ -152,4 +155,32 @@ Route::middleware(['auth:sanctum', 'role:Secretary'])
     ->group(function () {
         Route::get('/', [SaleReturnSettlementController::class, 'index']);
         Route::post('/', [SaleReturnSettlementController::class, 'store']);
+    });
+    // Expense Categories
+Route::middleware(['auth:sanctum', 'role:Secretary'])
+    ->prefix('expense-categories')
+    ->group(function () {
+        Route::get('/', [ExpenseCategoryController::class, 'index']);
+        Route::post('/', [ExpenseCategoryController::class, 'store']);
+        Route::get('/{id}', [ExpenseCategoryController::class, 'show']);
+        Route::put('/{id}', [ExpenseCategoryController::class, 'update']);
+        Route::patch('/{id}', [ExpenseCategoryController::class, 'update']);
+        Route::delete('/{id}', [ExpenseCategoryController::class, 'destroy']);
+    });
+
+// Expenses
+Route::middleware(['auth:sanctum', 'role:Secretary'])
+    ->prefix('expenses')
+    ->group(function () {
+        Route::get('/', [ExpenseController::class, 'index']);
+        Route::post('/', [ExpenseController::class, 'store']);
+        Route::get('/{id}', [ExpenseController::class, 'show']);
+    });
+    // Secretary-only cash transfers
+Route::middleware(['auth:sanctum', 'role:Secretary'])
+    ->prefix('cash-transfers')
+    ->group(function () {
+        Route::get('/', [CashTransferController::class, 'index']);
+        Route::post('/', [CashTransferController::class, 'store']);
+        Route::get('/{id}', [CashTransferController::class, 'show']);
     });
