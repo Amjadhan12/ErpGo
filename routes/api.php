@@ -24,6 +24,7 @@ use App\Http\Controllers\Api\CashTransferController;
 use App\Http\Controllers\Api\DailyBookNoteController;
 use App\Http\Controllers\Api\DocumentController;
 use App\Http\Controllers\Api\CustomerPortalController;
+use App\Http\Controllers\Api\SupplierPortalController;
 // Public authentication routes
 Route::prefix('auth')->group(function () {
     Route::post('/register', [AuthController::class, 'register']);
@@ -223,4 +224,11 @@ Route::middleware(['auth:sanctum', 'role:Customer'])
         Route::get('/profile', [CustomerPortalController::class, 'profile']);
         Route::get('/balance', [CustomerPortalController::class, 'balance']);
         Route::get('/transactions', [CustomerPortalController::class, 'transactions']);
+    });
+    Route::middleware(['auth:sanctum', 'role:Supplier'])
+    ->prefix('supplier')
+    ->group(function () {
+        Route::get('/profile', [SupplierPortalController::class, 'profile']);
+        Route::get('/balance', [SupplierPortalController::class, 'balance']);
+        Route::get('/transactions', [SupplierPortalController::class, 'transactions']);
     });
