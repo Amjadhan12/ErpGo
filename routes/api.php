@@ -221,4 +221,5 @@ Route::middleware(['auth:sanctum', 'role:Customer'])
     ->prefix('customer')
     ->group(function () {
         Route::get('/profile', [CustomerPortalController::class, 'profile']);
+        Route::get('/balance', [CustomerPortalController::class, 'balance']);
     });
