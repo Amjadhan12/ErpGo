@@ -23,6 +23,7 @@ use App\Http\Controllers\Api\ExpenseController;
 use App\Http\Controllers\Api\CashTransferController;
 use App\Http\Controllers\Api\DailyBookNoteController;
 use App\Http\Controllers\Api\DocumentController;
+use App\Http\Controllers\Api\CustomerPortalController;
 // Public authentication routes
 Route::prefix('auth')->group(function () {
     Route::post('/register', [AuthController::class, 'register']);
@@ -214,4 +215,10 @@ Route::middleware(['auth:sanctum', 'role:Secretary'])
         Route::get('/{document}', 'show');
         Route::get('/{document}/download', 'download');
         Route::delete('/{document}', 'destroy');
+    });
+    // Customer Portal - Customer Only
+Route::middleware(['auth:sanctum', 'role:Customer'])
+    ->prefix('customer')
+    ->group(function () {
+        Route::get('/profile', [CustomerPortalController::class, 'profile']);
     });
