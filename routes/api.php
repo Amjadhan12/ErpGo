@@ -25,6 +25,7 @@ use App\Http\Controllers\Api\DailyBookNoteController;
 use App\Http\Controllers\Api\DocumentController;
 use App\Http\Controllers\Api\CustomerPortalController;
 use App\Http\Controllers\Api\SupplierPortalController;
+use App\Http\Controllers\Api\ChatController;
 // Public authentication routes
 Route::prefix('auth')->group(function () {
     Route::post('/register', [AuthController::class, 'register']);
@@ -231,4 +232,19 @@ Route::middleware(['auth:sanctum', 'role:Customer'])
         Route::get('/profile', [SupplierPortalController::class, 'profile']);
         Route::get('/balance', [SupplierPortalController::class, 'balance']);
         Route::get('/transactions', [SupplierPortalController::class, 'transactions']);
+    });
+    // Chat System - Customer, Supplier and Secretary
+Route::middleware(['auth:sanctum'])
+    ->prefix('chat')
+    ->controller(ChatController::class)
+    ->group(function () {
+
+        Route::get('/messages', 'index');
+
+        Route::post('/messages', 'store');
+
+        Route::patch('/messages/{chatMessage}/read', 'markAsRead');
+
+        Route::get('/unread-count', 'unreadCount');
+
     });
