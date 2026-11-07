@@ -66,10 +66,11 @@ class OpeningStockController extends Controller
         $openingStock = DB::transaction(function () use ($validated, $request) {
 
             $warehouse = DB::table('warehouses')
-                ->where('id', $validated['warehouse_id'])
-                ->where('is_active', true)
-                ->lockForUpdate()
-                ->first();
+    ->where('id', $validated['warehouse_id'])
+    ->where('is_active', true)
+    ->whereNull('deleted_at')
+    ->lockForUpdate()
+    ->first();
 
             if (!$warehouse) {
                 throw ValidationException::withMessages([
@@ -88,10 +89,11 @@ class OpeningStockController extends Controller
             foreach ($validated['items'] as $item) {
 
                 $product = DB::table('products')
-                    ->where('id', $item['product_id'])
-                    ->where('is_active', true)
-                    ->lockForUpdate()
-                    ->first();
+    ->where('id', $item['product_id'])
+    ->where('is_active', true)
+    ->whereNull('deleted_at')
+    ->lockForUpdate()
+    ->first();
 
                 if (!$product) {
                     throw ValidationException::withMessages([
