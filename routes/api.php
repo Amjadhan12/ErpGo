@@ -29,6 +29,8 @@ use App\Http\Controllers\Api\ChatController;
 use App\Http\Controllers\Api\ProductCategoryController;
 use App\Http\Controllers\Api\ProductController;
 use App\Http\Controllers\Api\WarehouseController;
+use App\Http\Controllers\Api\UnitController;
+use App\Http\Controllers\Api\CurrencyController;
 // Public authentication routes
 Route::prefix('auth')->group(function () {
     Route::post('/register', [AuthController::class, 'register']);
@@ -70,6 +72,16 @@ Route::post('/warehouses', [WarehouseController::class, 'store']);
 Route::get('/warehouses/{warehouse}', [WarehouseController::class, 'show']);
 Route::put('/warehouses/{warehouse}', [WarehouseController::class, 'update']);
 Route::patch('/warehouses/{warehouse}/deactivate', [WarehouseController::class, 'deactivate']);
+// Unit Management Routes
+Route::get('/units', [UnitController::class, 'index']);
+Route::post('/units', [UnitController::class, 'store']);
+Route::get('/units/{unit}', [UnitController::class, 'show']);
+Route::put('/units/{unit}', [UnitController::class, 'update']);
+Route::patch('/units/{unit}/deactivate', [UnitController::class, 'deactivate']);
+// Currency Management Routes
+Route::get('/currencies', [CurrencyController::class, 'index']);
+Route::get('/currencies/{currency}', [CurrencyController::class, 'show']);
+Route::put('/currencies/{currency}', [CurrencyController::class, 'update']);
 
 });
 

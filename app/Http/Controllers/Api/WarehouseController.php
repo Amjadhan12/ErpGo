@@ -39,6 +39,7 @@ class WarehouseController extends Controller
 
     public function store(Request $request): JsonResponse
     {
+        
         $validated = $request->validate([
             'name' => ['required', 'string', 'max:150', 'unique:warehouses,name'],
             'location' => ['nullable', 'string', 'max:255'],
