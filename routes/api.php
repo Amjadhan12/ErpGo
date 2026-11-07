@@ -31,6 +31,7 @@ use App\Http\Controllers\Api\ProductController;
 use App\Http\Controllers\Api\WarehouseController;
 use App\Http\Controllers\Api\UnitController;
 use App\Http\Controllers\Api\CurrencyController;
+use App\Http\Controllers\Api\OpeningStockController;
 // Public authentication routes
 Route::prefix('auth')->group(function () {
     Route::post('/register', [AuthController::class, 'register']);
@@ -82,6 +83,10 @@ Route::patch('/units/{unit}/deactivate', [UnitController::class, 'deactivate']);
 Route::get('/currencies', [CurrencyController::class, 'index']);
 Route::get('/currencies/{currency}', [CurrencyController::class, 'show']);
 Route::put('/currencies/{currency}', [CurrencyController::class, 'update']);
+Route::delete('/currencies/{currency}', [CurrencyController::class, 'destroy']);
+Route::get('/opening-stocks', [OpeningStockController::class, 'index']);
+Route::post('/opening-stocks', [OpeningStockController::class, 'store']);
+Route::get('/opening-stocks/{openingStock}', [OpeningStockController::class, 'show']);
 
 });
 
