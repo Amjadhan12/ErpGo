@@ -28,6 +28,7 @@ use App\Http\Controllers\Api\SupplierPortalController;
 use App\Http\Controllers\Api\ChatController;
 use App\Http\Controllers\Api\ProductCategoryController;
 use App\Http\Controllers\Api\ProductController;
+use App\Http\Controllers\Api\WarehouseController;
 // Public authentication routes
 Route::prefix('auth')->group(function () {
     Route::post('/register', [AuthController::class, 'register']);
@@ -62,6 +63,13 @@ Route::post('/products', [ProductController::class, 'store']);
 Route::get('/products/{product}', [ProductController::class, 'show']);
 Route::put('/products/{product}', [ProductController::class, 'update']);
 Route::patch('/products/{product}/deactivate', [ProductController::class, 'deactivate']);
+
+// Warehouse Routes
+Route::get('/warehouses', [WarehouseController::class, 'index']);
+Route::post('/warehouses', [WarehouseController::class, 'store']);
+Route::get('/warehouses/{warehouse}', [WarehouseController::class, 'show']);
+Route::put('/warehouses/{warehouse}', [WarehouseController::class, 'update']);
+Route::patch('/warehouses/{warehouse}/deactivate', [WarehouseController::class, 'deactivate']);
 
 });
 
