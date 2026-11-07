@@ -26,6 +26,8 @@ use App\Http\Controllers\Api\DocumentController;
 use App\Http\Controllers\Api\CustomerPortalController;
 use App\Http\Controllers\Api\SupplierPortalController;
 use App\Http\Controllers\Api\ChatController;
+use App\Http\Controllers\Api\ProductCategoryController;
+use App\Http\Controllers\Api\ProductController;
 // Public authentication routes
 Route::prefix('auth')->group(function () {
     Route::post('/register', [AuthController::class, 'register']);
@@ -39,13 +41,29 @@ Route::middleware('auth:sanctum')->prefix('auth')->group(function () {
 });
 
 // Secretary-only test route
-Route::middleware(['auth:sanctum', 'role:Secretary'])
-    ->get('/secretary-check', function (Request $request) {
+Route::middleware(['auth:sanctum', 'role:Secretary'])->group(function () {
+
+    Route::get('/secretary-check', function (Request $request) {
         return response()->json([
             'message' => 'Secretary access granted.',
             'user' => $request->user(),
         ]);
     });
+
+    // Product Category Routes
+    Route::get('/product-categories', [ProductCategoryController::class, 'index']);
+    Route::post('/product-categories', [ProductCategoryController::class, 'store']);
+    Route::get('/product-categories/{productCategory}', [ProductCategoryController::class, 'show']);
+    Route::put('/product-categories/{productCategory}', [ProductCategoryController::class, 'update']);
+    Route::patch('/product-categories/{productCategory}/deactivate', [ProductCategoryController::class, 'deactivate']);
+    // Product Routes
+Route::get('/products', [ProductController::class, 'index']);
+Route::post('/products', [ProductController::class, 'store']);
+Route::get('/products/{product}', [ProductController::class, 'show']);
+Route::put('/products/{product}', [ProductController::class, 'update']);
+Route::patch('/products/{product}/deactivate', [ProductController::class, 'deactivate']);
+
+});
 
 // Customer-only test route
 Route::middleware(['auth:sanctum', 'role:Customer'])
