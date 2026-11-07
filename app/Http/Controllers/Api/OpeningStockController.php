@@ -10,6 +10,7 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
 use Illuminate\Validation\ValidationException;
+use Illuminate\Validation\Rule;
 
 class OpeningStockController extends Controller
 {
@@ -44,20 +45,23 @@ class OpeningStockController extends Controller
     public function store(Request $request)
     {
         $validated = $request->validate([
-            'warehouse_id' => ['required', 'exists:warehouses,id'],
-            'opening_date' => ['required', 'date'],
-            'notes' => ['nullable', 'string'],
+    'warehouse_id' => [
+        'required',
+        Rule::exists('warehouses', 'id')->whereNull('deleted_at'),
+    ],
+    'opening_date' => ['required', 'date'],
+    'notes' => ['nullable', 'string'],
 
-            'items' => ['required', 'array', 'min:1'],
-            'items.*.product_id' => [
-                'required',
-                'integer',
-                'distinct',
-                'exists:products,id',
-            ],
-            'items.*.quantity' => ['required', 'numeric', 'gt:0'],
-            'items.*.unit_cost_afn' => ['required', 'numeric', 'gte:0'],
-        ]);
+    'items' => ['required', 'array', 'min:1'],
+    'items.*.product_id' => [
+        'required',
+        'integer',
+        'distinct',
+        Rule::exists('products', 'id')->whereNull('deleted_at'),
+    ],
+    'items.*.quantity' => ['required', 'numeric', 'gt:0'],
+    'items.*.unit_cost_afn' => ['required', 'numeric', 'gte:0'],
+]);
 
         $openingStock = DB::transaction(function () use ($validated, $request) {
 
