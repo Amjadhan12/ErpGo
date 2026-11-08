@@ -32,6 +32,7 @@ use App\Http\Controllers\Api\WarehouseController;
 use App\Http\Controllers\Api\UnitController;
 use App\Http\Controllers\Api\CurrencyController;
 use App\Http\Controllers\Api\OpeningStockController;
+use App\Http\Controllers\Api\StockTransferController;
 // Public authentication routes
 Route::prefix('auth')->group(function () {
     Route::post('/register', [AuthController::class, 'register']);
@@ -87,6 +88,10 @@ Route::delete('/currencies/{currency}', [CurrencyController::class, 'destroy']);
 Route::get('/opening-stocks', [OpeningStockController::class, 'index']);
 Route::post('/opening-stocks', [OpeningStockController::class, 'store']);
 Route::get('/opening-stocks/{openingStock}', [OpeningStockController::class, 'show']);
+// Stock Transfer Routes
+Route::get('/stock-transfers', [StockTransferController::class, 'index']);
+Route::post('/stock-transfers', [StockTransferController::class, 'store']);
+Route::get('/stock-transfers/{stockTransfer}', [StockTransferController::class, 'show']);
 
 });
 
