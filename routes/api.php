@@ -35,6 +35,7 @@ use App\Http\Controllers\Api\OpeningStockController;
 use App\Http\Controllers\Api\StockTransferController;
 use App\Http\Controllers\Api\StockAdjustmentController;
 use App\Http\Controllers\Api\FinancialAccountLedgerReportController;
+use App\Http\Controllers\Api\CashBookReportController;
 // Public authentication routes
 Route::prefix('auth')->group(function () {
     Route::post('/register', [AuthController::class, 'register']);
@@ -101,6 +102,10 @@ Route::get('/stock-adjustments/{stockAdjustment}', [StockAdjustmentController::c
 Route::get(
     '/reports/financial-account-ledger',
     [FinancialAccountLedgerReportController::class, 'index']
+);
+Route::get(
+    '/reports/cash-book',
+    [CashBookReportController::class, 'index']
 );
 
 });
