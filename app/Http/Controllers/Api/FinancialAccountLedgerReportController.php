@@ -67,68 +67,83 @@ if ($fromDate) {
 $startingBalance = $openingBalance + $previousIn - $previousOut;
 
         // Transactions inside the selected period.
-        $transactionsQuery = FinancialTransaction::query()
-            ->where('financial_account_id', $account->id)
-            ->when($fromDate, fn ($query) =>
-                $query->whereDate('transaction_date', '>=', $fromDate)
-            )
-            ->when($toDate, fn ($query) =>
-                $query->whereDate('transaction_date', '<=', $toDate)
-            )
-            ->when($request->filled('direction'), fn ($query) =>
-                $query->where('direction', $validated['direction'])
-            )
-            ->when($request->filled('transaction_type'), fn ($query) =>
-                $query->where('transaction_type', $validated['transaction_type'])
-            );
+   
+// All transactions inside the selected date period.
+$periodTransactionsQuery = FinancialTransaction::query()
+    ->where('financial_account_id', $account->id)
+    ->when($fromDate, fn ($query) =>
+        $query->whereDate('transaction_date', '>=', $fromDate)
+    )
+    ->when($toDate, fn ($query) =>
+        $query->whereDate('transaction_date', '<=', $toDate)
+    );
 
-        // Summary totals use the same selected filters.
-        $totalIn = (float) (clone $transactionsQuery)
-            ->where('direction', 'in')
-            ->sum('amount');
+// Summary must include all transactions in the date period.
+$totalIn = (float) (clone $periodTransactionsQuery)
+    ->where('direction', 'in')
+    ->sum('amount');
 
-        $totalOut = (float) (clone $transactionsQuery)
-            ->where('direction', 'out')
-            ->sum('amount');
+$totalOut = (float) (clone $periodTransactionsQuery)
+    ->where('direction', 'out')
+    ->sum('amount');
 
-        // Running balance must include every transaction in chronological
-        // order, even when the user requests a later pagination page.
-        $allTransactions = (clone $transactionsQuery)
-            ->orderBy('transaction_date')
-            ->orderBy('id')
-            ->get();
+// Calculate running balance using ALL transactions.
+$allTransactions = (clone $periodTransactionsQuery)
+    ->orderBy('transaction_date')
+    ->orderBy('id')
+    ->get();
 
-        $runningBalance = $startingBalance;
+$runningBalance = $startingBalance;
 
-        $ledgerRows = $allTransactions->map(function ($transaction) use (&$runningBalance) {
-            if ($transaction->direction === 'in') {
-                $runningBalance += (float) $transaction->amount;
-            } else {
-                $runningBalance -= (float) $transaction->amount;
-            }
+$ledgerRows = $allTransactions->map(function ($transaction) use (&$runningBalance) {
+    if ($transaction->direction === 'in') {
+        $runningBalance += (float) $transaction->amount;
+    } else {
+        $runningBalance -= (float) $transaction->amount;
+    }
 
-            return [
-                'id' => $transaction->id,
-                'transaction_date' => $transaction->transaction_date,
-                'transaction_type' => $transaction->transaction_type,
-                'direction' => $transaction->direction,
-                'amount' => $transaction->amount,
-                'description' => $transaction->description,
-                'reference_type' => $transaction->reference_type,
-                'reference_id' => $transaction->reference_id,
-                'transaction_group' => $transaction->transaction_group,
-                'running_balance' => number_format($runningBalance, 4, '.', ''),
-            ];
-        });
+    return [
+        'id' => $transaction->id,
+        'transaction_date' => $transaction->transaction_date,
+        'transaction_type' => $transaction->transaction_type,
+        'direction' => $transaction->direction,
+        'amount' => $transaction->amount,
+        'description' => $transaction->description,
+        'reference_type' => $transaction->reference_type,
+        'reference_id' => $transaction->reference_id,
+        'transaction_group' => $transaction->transaction_group,
+        'running_balance' => number_format($runningBalance, 4, '.', ''),
+    ];
+});
 
-        $perPage = $validated['per_page'] ?? 20;
-        $currentPage = max(1, (int) $request->query('page', 1));
+// Apply display filters AFTER calculating running balances.
+$filteredLedgerRows = $ledgerRows->filter(function ($row) use ($validated) {
+    if (
+        isset($validated['direction']) &&
+        $row['direction'] !== $validated['direction']
+    ) {
+        return false;
+    }
 
-        $paginatedRows = $ledgerRows
-            ->forPage($currentPage, $perPage)
-            ->values();
+    if (
+        isset($validated['transaction_type']) &&
+        $row['transaction_type'] !== $validated['transaction_type']
+    ) {
+        return false;
+    }
 
-        $closingBalance = $startingBalance + $totalIn - $totalOut;
+    return true;
+})->values();
+
+$perPage = $validated['per_page'] ?? 20;
+$currentPage = max(1, (int) $request->query('page', 1));
+
+$paginatedRows = $filteredLedgerRows
+    ->forPage($currentPage, $perPage)
+    ->values();
+
+$closingBalance = $startingBalance + $totalIn - $totalOut;
+
 
         return response()->json([
             'message' => 'Financial account ledger retrieved successfully.',
