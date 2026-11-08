@@ -135,7 +135,7 @@ $filteredLedgerRows = $ledgerRows->filter(function ($row) use ($validated) {
     return true;
 })->values();
 
-$perPage = $validated['per_page'] ?? 20;
+$perPage = (int) ($validated['per_page'] ?? 20);
 $currentPage = max(1, (int) $request->query('page', 1));
 
 $paginatedRows = $filteredLedgerRows
