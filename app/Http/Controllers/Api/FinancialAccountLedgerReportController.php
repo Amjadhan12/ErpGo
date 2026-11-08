@@ -168,12 +168,12 @@ $closingBalance = $startingBalance + $totalIn - $totalOut;
                     'currency' => $account->currency?->code,
                 ],
                 'transactions' => [
-                    'current_page' => $currentPage,
-                    'per_page' => $perPage,
-                    'total' => $ledgerRows->count(),
-                    'last_page' => max(1, (int) ceil($ledgerRows->count() / $perPage)),
-                    'data' => $paginatedRows,
-                ],
+    'current_page' => $currentPage,
+    'per_page' => $perPage,
+    'total' => $filteredLedgerRows->count(),
+    'last_page' => max(1, (int) ceil($filteredLedgerRows->count() / $perPage)),
+    'data' => $paginatedRows,
+],
             ],
         ]);
     }
