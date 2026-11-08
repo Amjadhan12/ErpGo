@@ -33,6 +33,7 @@ use App\Http\Controllers\Api\UnitController;
 use App\Http\Controllers\Api\CurrencyController;
 use App\Http\Controllers\Api\OpeningStockController;
 use App\Http\Controllers\Api\StockTransferController;
+use App\Http\Controllers\Api\StockAdjustmentController;
 // Public authentication routes
 Route::prefix('auth')->group(function () {
     Route::post('/register', [AuthController::class, 'register']);
@@ -92,6 +93,10 @@ Route::get('/opening-stocks/{openingStock}', [OpeningStockController::class, 'sh
 Route::get('/stock-transfers', [StockTransferController::class, 'index']);
 Route::post('/stock-transfers', [StockTransferController::class, 'store']);
 Route::get('/stock-transfers/{stockTransfer}', [StockTransferController::class, 'show']);
+// Stock Adjustments
+Route::get('/stock-adjustments', [StockAdjustmentController::class, 'index']);
+Route::post('/stock-adjustments', [StockAdjustmentController::class, 'store']);
+Route::get('/stock-adjustments/{stockAdjustment}', [StockAdjustmentController::class, 'show']);
 
 });
 
