@@ -51,15 +51,20 @@ class FinancialAccountLedgerReportController extends Controller
             $previousTransactionsQuery->whereDate('transaction_date', '<=', $toDate);
         }
 
-        $previousIn = (float) (clone $previousTransactionsQuery)
-            ->where('direction', 'in')
-            ->sum('amount');
+       $previousIn = 0;
+$previousOut = 0;
 
-        $previousOut = (float) (clone $previousTransactionsQuery)
-            ->where('direction', 'out')
-            ->sum('amount');
+if ($fromDate) {
+    $previousIn = (float) (clone $previousTransactionsQuery)
+        ->where('direction', 'in')
+        ->sum('amount');
 
-        $startingBalance = $openingBalance + $previousIn - $previousOut;
+    $previousOut = (float) (clone $previousTransactionsQuery)
+        ->where('direction', 'out')
+        ->sum('amount');
+}
+
+$startingBalance = $openingBalance + $previousIn - $previousOut;
 
         // Transactions inside the selected period.
         $transactionsQuery = FinancialTransaction::query()
