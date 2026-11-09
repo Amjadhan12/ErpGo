@@ -41,6 +41,7 @@ use App\Http\Controllers\Api\ProfitLossReportController;
 use App\Http\Controllers\Api\CashFlowReportController;
 use App\Http\Controllers\Api\PartnerAgingReportController;
 use App\Http\Controllers\Api\FinancialSummaryReportController;
+use App\Http\Controllers\Api\StockWastageController;
 // Public authentication routes
 Route::prefix('auth')->group(function () {
     Route::post('/register', [AuthController::class, 'register']);
@@ -108,6 +109,13 @@ Route::get(
     '/reports/financial-account-ledger',
     [FinancialAccountLedgerReportController::class, 'index']
 );
+Route::middleware(['auth:sanctum', 'role:Secretary'])
+    ->prefix('stock-wastages')
+    ->group(function () {
+        Route::get('/', [StockWastageController::class, 'index']);
+        Route::post('/', [StockWastageController::class, 'store']);
+        Route::get('/{stockWastage}', [StockWastageController::class, 'show']);
+    });
 Route::get(
     '/reports/cash-book',
     [CashBookReportController::class, 'index']
