@@ -102,7 +102,9 @@ class CashFlowReportController extends Controller
 
         foreach ($accounts as $account) {
             $opening = (float) ($openingBalances[$account->id] ?? 0);
-            $previous = $previousTotals->get($account->id);
+           $previous = $fromDate
+    ? $previousTotals->get($account->id)
+    : null;
 
             $startingBalances[$account->id] =
                 $opening
