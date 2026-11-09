@@ -207,7 +207,7 @@ class CashFlowReportController extends Controller
                     'internal_transfer_in' => number_format($transferIn, 4, '.', ''),
                     'internal_transfer_out' => number_format($transferOut, 4, '.', ''),
                     'closing_balance' => number_format(
-                        $opening + $totalIn - $totalOut,
+                        $opening + $totalIn - $totalOut + $transferIn - $transferOut,
                         4,
                         '.',
                         ''
