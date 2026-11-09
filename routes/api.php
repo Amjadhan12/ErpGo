@@ -33,11 +33,13 @@ use App\Http\Controllers\Api\UnitController;
 use App\Http\Controllers\Api\CurrencyController;
 use App\Http\Controllers\Api\OpeningStockController;
 use App\Http\Controllers\Api\StockTransferController;
+use App\Http\Controllers\Api\UserController;
 use App\Http\Controllers\Api\StockAdjustmentController;
 use App\Http\Controllers\Api\FinancialAccountLedgerReportController;
 use App\Http\Controllers\Api\CashBookReportController;
 use App\Http\Controllers\Api\ProfitLossReportController;
 use App\Http\Controllers\Api\CashFlowReportController;
+use App\Http\Controllers\Api\PartnerAgingReportController;
 use App\Http\Controllers\Api\FinancialSummaryReportController;
 // Public authentication routes
 Route::prefix('auth')->group(function () {
@@ -119,8 +121,17 @@ Route::get(
     '/reports/financial-summary',
     [FinancialSummaryReportController::class, 'index']
 );
-
+Route::get('/reports/partner-aging', [PartnerAgingReportController::class, 'index']);
 });
+// Secretary-only User Management
+Route::middleware(['auth:sanctum', 'role:Secretary'])
+    ->prefix('users')
+    ->group(function () {
+        Route::get('/', [UserController::class, 'index']);
+        Route::get('/{user}', [UserController::class, 'show']);
+        Route::put('/{user}', [UserController::class, 'update']);
+        Route::patch('/{user}', [UserController::class, 'update']);
+    });
 
 // Customer-only test route
 Route::middleware(['auth:sanctum', 'role:Customer'])
