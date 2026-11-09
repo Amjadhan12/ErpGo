@@ -36,6 +36,7 @@ use App\Http\Controllers\Api\StockTransferController;
 use App\Http\Controllers\Api\StockAdjustmentController;
 use App\Http\Controllers\Api\FinancialAccountLedgerReportController;
 use App\Http\Controllers\Api\CashBookReportController;
+use App\Http\Controllers\Api\ProfitLossReportController;
 // Public authentication routes
 Route::prefix('auth')->group(function () {
     Route::post('/register', [AuthController::class, 'register']);
@@ -107,6 +108,7 @@ Route::get(
     '/reports/cash-book',
     [CashBookReportController::class, 'index']
 );
+Route::get('/reports/profit-loss', [ProfitLossReportController::class, 'index']);
 
 });
 
