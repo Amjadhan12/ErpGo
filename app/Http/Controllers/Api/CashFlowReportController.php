@@ -257,33 +257,41 @@ class CashFlowReportController extends Controller
         })->values();
 
         // Transaction type breakdown, excluding internal transfers.
-        $typeBreakdown = $externalTransactions
-            ->groupBy('transaction_type')
-            ->map(function ($rows, $type) {
-                return [
-                    'transaction_type' => $type,
-                    'currency' => $rows->first()
-                        ?->financialAccount?->currency?->code,
-                    'cash_inflow' => number_format(
-                        $rows->where('direction', 'in')->sum(
-                            fn ($row) => (float) $row->amount
-                        ),
-                        4,
-                        '.',
-                        ''
-                    ),
-                    'cash_outflow' => number_format(
-                        $rows->where('direction', 'out')->sum(
-                            fn ($row) => (float) $row->amount
-                        ),
-                        4,
-                        '.',
-                        ''
-                    ),
-                    'transactions_count' => $rows->count(),
-                ];
-            })
-            ->values();
+       
+// Transaction type breakdown, grouped by currency and type.
+$typeBreakdown = $externalTransactions
+    ->groupBy(fn ($row) =>
+        ($row->financialAccount?->currency?->code ?? 'UNKNOWN')
+        . '|'
+        . $row->transaction_type
+    )
+    ->map(function ($rows) {
+        $first = $rows->first();
+
+        return [
+            'transaction_type' => $first?->transaction_type,
+            'currency' => $first?->financialAccount?->currency?->code,
+            'cash_inflow' => number_format(
+                $rows->where('direction', 'in')->sum(
+                    fn ($row) => (float) $row->amount
+                ),
+                4,
+                '.',
+                ''
+            ),
+            'cash_outflow' => number_format(
+                $rows->where('direction', 'out')->sum(
+                    fn ($row) => (float) $row->amount
+                ),
+                4,
+                '.',
+                ''
+            ),
+            'transactions_count' => $rows->count(),
+        ];
+    })
+    ->values();
+
 
         // Paginated transaction details.
         $perPage = (int) ($validated['per_page'] ?? 20);
