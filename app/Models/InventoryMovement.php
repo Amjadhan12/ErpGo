@@ -4,7 +4,7 @@ namespace App\Models;
 
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
-
+use Illuminate\Database\Eloquent\Relations\HasMany;
 class InventoryMovement extends Model
 {
     protected $fillable = [
@@ -47,4 +47,8 @@ class InventoryMovement extends Model
     {
         return $this->belongsTo(User::class, 'created_by');
     }
+    public function batchDetails(): HasMany
+{
+    return $this->hasMany(InventoryMovementBatch::class);
+}
 }
