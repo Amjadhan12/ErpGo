@@ -17,6 +17,8 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
 use Illuminate\Validation\ValidationException;
+use App\Models\ProductBatch;
+use App\Models\InventoryMovementBatch;
 
 class PurchaseController extends Controller
 {
@@ -53,6 +55,8 @@ class PurchaseController extends Controller
             'items.*.quantity' => ['required', 'numeric', 'gt:0', 'max:999999999999'],
             'items.*.unit_cost' => ['required', 'numeric', 'min:0', 'max:999999999999'],
             'items.*.discount_amount' => ['nullable', 'numeric', 'min:0'],
+'items.*.batch_number' => ['nullable', 'string', 'max:100'],
+'items.*.expiry_date' => ['nullable', 'date_format:Y-m-d', 'after_or_equal:purchase_date'],
             'payment_type' => ['required', 'in:credit,cash'],
             'financial_account_id' => ['required_if:payment_type,cash', 'nullable', 'integer', 'exists:financial_accounts,id'],
         ]);
@@ -124,6 +128,8 @@ class PurchaseController extends Controller
                     'unit_cost' => $unitCost,
                     'discount_amount' => $lineDiscount,
                     'line_total' => $lineTotal,
+                    'batch_number' => $item['batch_number'] ?? null,
+'expiry_date' => $item['expiry_date'] ?? null,
                     'unit_cost_afn' => round($unitCost * (float) $validated['exchange_rate_to_afn'], 6),
                     'line_total_afn' => round($lineTotal * (float) $validated['exchange_rate_to_afn'], 4),
                 ];
@@ -182,7 +188,7 @@ class PurchaseController extends Controller
                     ? round($finalLineTotalAfn / $line['quantity'], 6)
                     : 0;
 
-                $purchase->items()->create([
+                $purchaseItem = $purchase->items()->create([
                     'product_id' => $line['product']->id,
                     'quantity' => $line['quantity'],
                     'unit_cost' => $line['unit_cost'],
@@ -229,21 +235,42 @@ class PurchaseController extends Controller
                     'average_unit_cost' => round($newAverageCost, 6),
                 ]);
 
-                InventoryMovement::create([
-                    'warehouse_id' => $validated['warehouse_id'],
-                    'product_id' => $line['product']->id,
-                    'movement_type' => 'purchase',
-                    'quantity_in' => $line['quantity'],
-                    'quantity_out' => 0,
-                    'unit_cost' => $effectiveUnitCostAfn,
-                    'total_cost' => $finalLineTotalAfn,
-                    'reference_type' => Purchase::class,
-                    'reference_id' => $purchase->id,
-                    'movement_date' => $validated['purchase_date'] . ' 00:00:00',
-                    'notes' => 'Purchase ' . $purchase->purchase_number,
-                    'created_by' => $request->user()->id,
-                ]);
-            }
+                $movement = InventoryMovement::create([
+    'warehouse_id' => $validated['warehouse_id'],
+    'product_id' => $line['product']->id,
+    'movement_type' => 'purchase',
+    'quantity_in' => $line['quantity'],
+    'quantity_out' => 0,
+    'unit_cost' => $effectiveUnitCostAfn,
+    'total_cost' => $finalLineTotalAfn,
+    'reference_type' => Purchase::class,
+    'reference_id' => $purchase->id,
+    'movement_date' => $validated['purchase_date'] . ' 00:00:00',
+    'notes' => 'Purchase ' . $purchase->purchase_number,
+    'created_by' => $request->user()->id,
+]);
+
+$batch = ProductBatch::create([
+    'product_id' => $line['product']->id,
+    'warehouse_id' => $validated['warehouse_id'],
+    'batch_number' => $line['batch_number'] ?? null,
+    'expiry_date' => $line['expiry_date'] ?? null,
+    'received_quantity' => $line['quantity'],
+    'remaining_quantity' => $line['quantity'],
+    'unit_cost_afn' => $effectiveUnitCostAfn,
+    'source_type' => Purchase::class,
+    'source_id' => $purchase->id,
+    'created_by' => $request->user()->id,
+]);
+
+InventoryMovementBatch::create([
+    'inventory_movement_id' => $movement->id,
+    'product_batch_id' => $batch->id,
+    'direction' => 'in',
+    'quantity' => $line['quantity'],
+    'unit_cost_afn' => $effectiveUnitCostAfn,
+    'total_cost_afn' => $finalLineTotalAfn,
+]);
 
             PartnerTransaction::create([
                 'business_partner_id' => $validated['business_partner_id'],
