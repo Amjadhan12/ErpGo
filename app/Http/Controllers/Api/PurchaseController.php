@@ -271,7 +271,7 @@ InventoryMovementBatch::create([
     'unit_cost_afn' => $effectiveUnitCostAfn,
     'total_cost_afn' => $finalLineTotalAfn,
 ]);
-
+} 
             PartnerTransaction::create([
                 'business_partner_id' => $validated['business_partner_id'],
                 'currency_id' => $currency->id,
