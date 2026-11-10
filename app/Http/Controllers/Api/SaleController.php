@@ -20,6 +20,9 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
 use Illuminate\Validation\ValidationException;
+use App\Models\ProductBatch;
+use App\Models\SaleItemBatch;
+use App\Models\InventoryMovementBatch;
 
 
 class SaleController extends Controller
@@ -334,115 +337,195 @@ class SaleController extends Controller
             ]);
 
             // Allocate header discount proportionally.
-            $netSubtotal = $availableForHeaderDiscount;
-            $allocatedHeaderDiscount = 0;
-            $lastIndex = count($preparedItems) - 1;
+           
+// Allocate header discount proportionally.
+$netSubtotal = $availableForHeaderDiscount;
+$allocatedHeaderDiscount = 0;
+$lastIndex = count($preparedItems) - 1;
 
-            foreach ($preparedItems as $index => $item) {
-                $balance = InventoryBalance::where(
-                    'warehouse_id',
-                    $warehouse->id
-                )
-                    ->where('product_id', $item['product_id'])
-                    ->lockForUpdate()
-                    ->first();
+foreach ($preparedItems as $index => $item) {
+    $balance = InventoryBalance::where('warehouse_id', $warehouse->id)
+        ->where('product_id', $item['product_id'])
+        ->lockForUpdate()
+        ->first();
 
-                if (! $balance) {
-                    throw ValidationException::withMessages([
-                        'items' =>
-                            'Inventory balance not found for product '
-                            . $item['product']->name . '.',
-                    ]);
-                }
+    if (! $balance) {
+        throw ValidationException::withMessages([
+            'items' => 'Inventory balance not found for product '
+                . $item['product']->name . '.',
+        ]);
+    }
 
-                if ((float) $balance->quantity < $item['quantity']) {
-                    throw ValidationException::withMessages([
-                        'items' =>
-                            'Insufficient stock for product '
-                            . $item['product']->name
-                            . '. Available: ' . $balance->quantity,
-                    ]);
-                }
+    if ((float) $balance->quantity < $item['quantity']) {
+        throw ValidationException::withMessages([
+            'items' => 'Insufficient stock for product '
+                . $item['product']->name
+                . '. Available: ' . $balance->quantity,
+        ]);
+    }
 
-                if ($index === $lastIndex) {
-                    $headerShare = round(
-                        $headerDiscount - $allocatedHeaderDiscount,
-                        4
-                    );
-                } elseif ($netSubtotal > 0) {
-                    $headerShare = round(
-                        $headerDiscount * $item['net'] / $netSubtotal,
-                        4
-                    );
-                    $allocatedHeaderDiscount += $headerShare;
-                } else {
-                    $headerShare = 0;
-                }
+    if ($index === $lastIndex) {
+        $headerShare = round(
+            $headerDiscount - $allocatedHeaderDiscount,
+            4
+        );
+    } elseif ($netSubtotal > 0) {
+        $headerShare = round(
+            $headerDiscount * $item['net'] / $netSubtotal,
+            4
+        );
+        $allocatedHeaderDiscount += $headerShare;
+    } else {
+        $headerShare = 0;
+    }
 
-                $totalItemDiscount = round(
-                    $item['item_discount'] + $headerShare,
-                    4
-                );
+    $totalItemDiscount = round(
+        $item['item_discount'] + $headerShare,
+        4
+    );
 
-                $lineTotal = round(
-                    $item['gross'] - $totalItemDiscount,
-                    4
-                );
+    $lineTotal = round(
+        $item['gross'] - $totalItemDiscount,
+        4
+    );
 
-                $averageCost = (float) $balance->average_unit_cost;
-                $totalCost = round(
-                    $item['quantity'] * $averageCost,
-                    4
-                );
+    // Get eligible batches using FEFO.
+    $batches = ProductBatch::where('product_id', $item['product_id'])
+        ->where('warehouse_id', $warehouse->id)
+        ->where('remaining_quantity', '>', 0)
+        ->where(function ($query) use ($validated) {
+            $query->whereNull('expiry_date')
+                ->orWhereDate('expiry_date', '>=', $validated['sale_date']);
+        })
+        ->orderByRaw('CASE WHEN expiry_date IS NULL THEN 1 ELSE 0 END')
+        ->orderBy('expiry_date')
+        ->orderBy('id')
+        ->lockForUpdate()
+        ->get();
 
-                $unitPriceAfn = round(
-                    $item['unit_price'] * $exchangeRate,
-                    6
-                );
+    $batchAvailable = (float) $batches->sum('remaining_quantity');
 
-                $lineTotalAfn = round(
-                    $lineTotal * $exchangeRate,
-                    4
-                );
+    if ($batchAvailable < $item['quantity']) {
+        throw ValidationException::withMessages([
+            'items' => 'Not enough non-expired batch stock for product '
+                . $item['product']->name
+                . '. Available batch stock: ' . $batchAvailable,
+        ]);
+    }
 
-                SaleItem::create([
-                    'sale_id' => $sale->id,
-                    'product_id' => $item['product_id'],
-                    'quantity' => $item['quantity'],
-                    'unit_price' => $item['unit_price'],
-                    'discount_amount' => $totalItemDiscount,
-                    'line_total' => $lineTotal,
-                    'unit_price_afn' => $unitPriceAfn,
-                    'line_total_afn' => $lineTotalAfn,
-                    'unit_cost_afn' => $averageCost,
-                    'total_cost_afn' => $totalCost,
-                    'notes' => $item['notes'],
-                ]);
+    // Calculate actual cost from selected batches.
+    $remainingToAllocate = $item['quantity'];
+    $totalCost = 0;
+    $allocations = [];
 
-                // Reduce stock.
-                $balance->update([
-                    'quantity' => round(
-                        (float) $balance->quantity - $item['quantity'],
-                        4
-                    ),
-                ]);
+    foreach ($batches as $batch) {
+        if ($remainingToAllocate <= 0) {
+            break;
+        }
 
-                // Record inventory out movement.
-                InventoryMovement::create([
-                    'warehouse_id' => $warehouse->id,
-                    'product_id' => $item['product_id'],
-                    'movement_type' => 'sale',
-                    'quantity_in' => 0,
-                    'quantity_out' => $item['quantity'],
-                    'unit_cost' => $averageCost,
-                    'total_cost' => $totalCost,
-                    'reference_type' => Sale::class,
-                    'reference_id' => $sale->id,
-                    'movement_date' => $validated['sale_date'],
-                    'notes' => 'Sale ' . $sale->sale_number,
-                    'created_by' => $request->user()->id,
-                ]);
-            }
+        $available = (float) $batch->remaining_quantity;
+        $allocatedQty = min($available, $remainingToAllocate);
+        $batchUnitCost = (float) $batch->unit_cost_afn;
+        $batchTotalCost = round($allocatedQty * $batchUnitCost, 4);
+
+        $allocations[] = [
+            'batch' => $batch,
+            'quantity' => $allocatedQty,
+            'unit_cost_afn' => $batchUnitCost,
+            'total_cost_afn' => $batchTotalCost,
+        ];
+
+        $totalCost += $batchTotalCost;
+        $remainingToAllocate -= $allocatedQty;
+    }
+
+    $totalCost = round($totalCost, 4);
+    $averageUnitCost = round($totalCost / $item['quantity'], 6);
+
+    $unitPriceAfn = round(
+        $item['unit_price'] * $exchangeRate,
+        6
+    );
+
+    $lineTotalAfn = round(
+        $lineTotal * $exchangeRate,
+        4
+    );
+
+    // Create sale item using actual batch cost.
+    $saleItem = SaleItem::create([
+        'sale_id' => $sale->id,
+        'product_id' => $item['product_id'],
+        'quantity' => $item['quantity'],
+        'unit_price' => $item['unit_price'],
+        'discount_amount' => $totalItemDiscount,
+        'line_total' => $lineTotal,
+        'unit_price_afn' => $unitPriceAfn,
+        'line_total_afn' => $lineTotalAfn,
+        'unit_cost_afn' => $averageUnitCost,
+        'total_cost_afn' => $totalCost,
+        'notes' => $item['notes'],
+    ]);
+
+    // Deduct quantities from batches and record allocations.
+    foreach ($allocations as $allocation) {
+        $batch = $allocation['batch'];
+
+        $batch->update([
+            'remaining_quantity' => round(
+                (float) $batch->remaining_quantity
+                    - $allocation['quantity'],
+                4
+            ),
+        ]);
+
+        SaleItemBatch::create([
+            'sale_item_id' => $saleItem->id,
+            'product_batch_id' => $batch->id,
+            'quantity' => $allocation['quantity'],
+            'unit_cost_afn' => $allocation['unit_cost_afn'],
+            'total_cost_afn' => $allocation['total_cost_afn'],
+        ]);
+    }
+
+    // Reduce aggregate inventory balance.
+    $balance->update([
+        'quantity' => round(
+            (float) $balance->quantity - $item['quantity'],
+            4
+        ),
+    ]);
+
+    // Record inventory out movement.
+    $movement = InventoryMovement::create([
+        'warehouse_id' => $warehouse->id,
+        'product_id' => $item['product_id'],
+        'movement_type' => 'sale',
+        'quantity_in' => 0,
+        'quantity_out' => $item['quantity'],
+        'unit_cost' => $averageUnitCost,
+        'total_cost' => $totalCost,
+        'reference_type' => Sale::class,
+        'reference_id' => $sale->id,
+        'movement_date' => $validated['sale_date'],
+        'notes' => 'Sale ' . $sale->sale_number,
+        'created_by' => $request->user()->id,
+    ]);
+
+    // Link inventory movement to consumed batches.
+    foreach ($allocations as $allocation) {
+        InventoryMovementBatch::create([
+            'inventory_movement_id' => $movement->id,
+            'product_batch_id' => $allocation['batch']->id,
+            'direction' => 'out',
+            'quantity' => $allocation['quantity'],
+            'unit_cost_afn' => $allocation['unit_cost_afn'],
+            'total_cost_afn' => $allocation['total_cost_afn'],
+        ]);
+    }
+}
+
+
 
             // Record the customer's full receivable amount.
             PartnerTransaction::create([
