@@ -44,6 +44,7 @@ use App\Http\Controllers\Api\CashFlowReportController;
 use App\Http\Controllers\Api\PartnerAgingReportController;
 use App\Http\Controllers\Api\FinancialSummaryReportController;
 use App\Http\Controllers\Api\StockWastageController;
+use App\Http\Controllers\Api\SettingController;
 // Public authentication routes
 Route::prefix('auth')->group(function () {
     Route::post('/register', [AuthController::class, 'register']);
@@ -111,6 +112,7 @@ Route::get(
     '/reports/financial-account-ledger',
     [FinancialAccountLedgerReportController::class, 'index']
 );
+Route::apiResource('settings', SettingController::class);
 Route::middleware('auth:sanctum')->get(
     '/reports/batch-expiry',
     [BatchExpiryReportController::class, 'index']
