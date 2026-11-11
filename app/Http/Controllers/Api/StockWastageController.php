@@ -235,7 +235,7 @@ foreach ($allocations as $allocation) {
         ),
     ]);
 
-    InventoryMovementBatch::create([
+    $movement = InventoryMovement::create([
         'inventory_movement_id' => $movement->id,
         'product_batch_id' => $batch->id,
         'direction' => 'out',
