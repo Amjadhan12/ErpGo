@@ -222,6 +222,29 @@ $unitCost = round($totalCost / $quantity, 6);
                     'notes' => $item['reason'],
                     'created_by' => $request->user()->id,
                 ]);
+
+// Deduct quantities from batches and record movement allocations.
+foreach ($allocations as $allocation) {
+    $batch = $allocation['batch'];
+
+    $batch->update([
+        'remaining_quantity' => round(
+            (float) $batch->remaining_quantity
+                - $allocation['quantity'],
+            4
+        ),
+    ]);
+
+    InventoryMovementBatch::create([
+        'inventory_movement_id' => $movement->id,
+        'product_batch_id' => $batch->id,
+        'direction' => 'out',
+        'quantity' => $allocation['quantity'],
+        'unit_cost_afn' => $allocation['unit_cost_afn'],
+        'total_cost_afn' => $allocation['total_cost_afn'],
+    ]);
+}
+
             }
 
             return response()->json([
