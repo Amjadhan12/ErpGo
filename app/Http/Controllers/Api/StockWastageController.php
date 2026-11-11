@@ -133,7 +133,7 @@ class StockWastageController extends Controller
                 }
 
                 $quantity = (float) $item['quantity'];
-                $available = (float) $balance->quantity;
+               $balanceAvailable = (float) $balance->quantity;
 
                 if ($available < $quantity) {
                     throw ValidationException::withMessages([
@@ -175,7 +175,8 @@ foreach ($batches as $batch) {
         break;
     }
 
-    $available = (float) $batch->remaining_quantity;
+    $batchAvailableQty = (float) $batch->remaining_quantity;
+$allocatedQty = min($batchAvailableQty, $remainingToAllocate);
     $allocatedQty = min($available, $remainingToAllocate);
     $batchUnitCost = (float) $batch->unit_cost_afn;
     $batchTotalCost = round($allocatedQty * $batchUnitCost, 4);
@@ -195,8 +196,8 @@ $totalCost = round($totalCost, 4);
 $unitCost = round($totalCost / $quantity, 6);
 
 
-                $balance->quantity = round($available - $quantity, 4);
-                $balance->save();
+                $balance->quantity = round($balanceAvailable - $quantity, 4);
+$balance->save();
 
                 StockWastageItem::create([
                     'stock_wastage_id' => $wastage->id,
