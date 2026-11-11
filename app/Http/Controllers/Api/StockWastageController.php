@@ -235,14 +235,14 @@ foreach ($allocations as $allocation) {
         ),
     ]);
 
-     InventoryMovement::create([
-        'inventory_movement_id' => $movement->id,
-        'product_batch_id' => $batch->id,
-        'direction' => 'out',
-        'quantity' => $allocation['quantity'],
-        'unit_cost_afn' => $allocation['unit_cost_afn'],
-        'total_cost_afn' => $allocation['total_cost_afn'],
-    ]);
+  InventoryMovementBatch::create([
+    'inventory_movement_id' => $movement->id,
+    'product_batch_id' => $batch->id,
+    'direction' => 'out',
+    'quantity' => $allocation['quantity'],
+    'unit_cost_afn' => $allocation['unit_cost_afn'],
+    'total_cost_afn' => $allocation['total_cost_afn'],
+]);
 }
 
             }
