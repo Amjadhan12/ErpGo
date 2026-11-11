@@ -37,6 +37,8 @@ use App\Http\Controllers\Api\UserController;
 use App\Http\Controllers\Api\StockAdjustmentController;
 use App\Http\Controllers\Api\FinancialAccountLedgerReportController;
 use App\Http\Controllers\Api\CashBookReportController;
+use App\Http\Controllers\Api\BatchExpiryReportController;
+
 use App\Http\Controllers\Api\ProfitLossReportController;
 use App\Http\Controllers\Api\CashFlowReportController;
 use App\Http\Controllers\Api\PartnerAgingReportController;
@@ -108,6 +110,14 @@ Route::get('/stock-adjustments/{stockAdjustment}', [StockAdjustmentController::c
 Route::get(
     '/reports/financial-account-ledger',
     [FinancialAccountLedgerReportController::class, 'index']
+);
+Route::middleware('auth:sanctum')->get(
+    '/reports/batch-expiry',
+    [BatchExpiryReportController::class, 'index']
+);
+Route::middleware('auth:sanctum')->get(
+    '/reports/batch-expiry/alerts',
+    [BatchExpiryReportController::class, 'alerts']
 );
 Route::middleware(['auth:sanctum', 'role:Secretary'])
     ->prefix('stock-wastages')
