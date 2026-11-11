@@ -10,6 +10,8 @@ use App\Models\StockWastage;
 use App\Models\StockWastageItem;
 use App\Models\Warehouse;
 use Illuminate\Http\Request;
+use App\Models\ProductBatch;
+use App\Models\InventoryMovementBatch;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
 
@@ -141,8 +143,57 @@ class StockWastageController extends Controller
                     ]);
                 }
 
-                $unitCost = (float) $balance->average_unit_cost;
-                $totalCost = round($quantity * $unitCost, 6);
+              
+// Get batches in FEFO order.
+// Expired batches are also included because this is stock wastage.
+$batches = ProductBatch::where('product_id', $product->id)
+    ->where('warehouse_id', $warehouse->id)
+    ->where('remaining_quantity', '>', 0)
+    ->orderByRaw('CASE WHEN expiry_date IS NULL THEN 1 ELSE 0 END')
+    ->orderBy('expiry_date')
+    ->orderBy('id')
+    ->lockForUpdate()
+    ->get();
+
+$batchAvailable = (float) $batches->sum('remaining_quantity');
+
+if ($batchAvailable < $quantity) {
+    throw ValidationException::withMessages([
+        'items' => [
+            "Insufficient batch stock for product {$product->id}. Available: {$batchAvailable}",
+        ],
+    ]);
+}
+
+// Allocate wastage quantity from batches.
+$remainingToAllocate = $quantity;
+$totalCost = 0;
+$allocations = [];
+
+foreach ($batches as $batch) {
+    if ($remainingToAllocate <= 0) {
+        break;
+    }
+
+    $available = (float) $batch->remaining_quantity;
+    $allocatedQty = min($available, $remainingToAllocate);
+    $batchUnitCost = (float) $batch->unit_cost_afn;
+    $batchTotalCost = round($allocatedQty * $batchUnitCost, 4);
+
+    $allocations[] = [
+        'batch' => $batch,
+        'quantity' => $allocatedQty,
+        'unit_cost_afn' => $batchUnitCost,
+        'total_cost_afn' => $batchTotalCost,
+    ];
+
+    $totalCost += $batchTotalCost;
+    $remainingToAllocate -= $allocatedQty;
+}
+
+$totalCost = round($totalCost, 4);
+$unitCost = round($totalCost / $quantity, 6);
+
 
                 $balance->quantity = round($available - $quantity, 4);
                 $balance->save();
