@@ -11,6 +11,7 @@ use App\Models\Expense;
 use Illuminate\Http\Request;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Support\Facades\DB;
+use App\Models\StockWastageItem;
 
 class ProfitLossReportController extends Controller
 {
@@ -87,6 +88,19 @@ class ProfitLossReportController extends Controller
             return (float) $expense->amount
                 * (float) $expense->exchange_rate_to_afn;
         });
+        // 6. Stock Wastage Cost
+$wastageQuery = StockWastageItem::whereHas('stockWastage', function (Builder $query) use ($fromDate, $toDate) {
+    $query->where('status', 'posted');
+
+    $this->applyDateFilters(
+        $query,
+        'wastage_date',
+        $fromDate,
+        $toDate
+    );
+});
+
+$stockWastageCost = (float) $wastageQuery->sum('total_cost_afn');
 
         // 6. Expense Category Breakdown
         $expensesByCategory = $expenses
@@ -117,7 +131,7 @@ class ProfitLossReportController extends Controller
 
         $grossProfit = $netRevenue - $netCostOfGoodsSold;
 
-        $netProfit = $grossProfit - $operatingExpenses;
+        $netProfit = $grossProfit - $operatingExpenses - $stockWastageCost;
 
         return response()->json([
             'message' => 'Profit and loss report retrieved successfully.',
@@ -126,6 +140,7 @@ class ProfitLossReportController extends Controller
                 'filters' => [
                     'from_date' => $fromDate,
                     'to_date' => $toDate,
+                    
                 ],
 
                 'currency' => 'AFN',
@@ -141,12 +156,12 @@ class ProfitLossReportController extends Controller
                     'returned_goods_cost' => round($returnedGoodsCost, 2),
                     'net_cost' => round($netCostOfGoodsSold, 2),
                 ],
-
-                'profit' => [
-                    'gross_profit' => round($grossProfit, 2),
-                    'operating_expenses' => round($operatingExpenses, 2),
-                    'net_profit' => round($netProfit, 2),
-                ],
+'profit' => [
+    'gross_profit' => round($grossProfit, 2),
+    'operating_expenses' => round($operatingExpenses, 2),
+    'stock_wastage_cost' => round($stockWastageCost, 2),
+    'net_profit' => round($netProfit, 2),
+],
 
                 'expenses_by_category' => $expensesByCategory,
             ],
