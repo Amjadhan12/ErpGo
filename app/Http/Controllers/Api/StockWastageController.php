@@ -135,14 +135,13 @@ class StockWastageController extends Controller
                 $quantity = (float) $item['quantity'];
                $balanceAvailable = (float) $balance->quantity;
 
-                if ($available < $quantity) {
-                    throw ValidationException::withMessages([
-                        'items' => [
-                            "Insufficient stock for product {$product->id}. Available: {$available}",
-                        ],
-                    ]);
-                }
-
+              if ($balanceAvailable < $quantity) {
+    throw ValidationException::withMessages([
+        'items' => [
+            "Insufficient stock for product {$product->id}. Available: {$balanceAvailable}",
+        ],
+    ]);
+}
               
 // Get batches in FEFO order.
 // Expired batches are also included because this is stock wastage.
@@ -177,7 +176,7 @@ foreach ($batches as $batch) {
 
     $batchAvailableQty = (float) $batch->remaining_quantity;
 $allocatedQty = min($batchAvailableQty, $remainingToAllocate);
-    $allocatedQty = min($available, $remainingToAllocate);
+    
     $batchUnitCost = (float) $batch->unit_cost_afn;
     $batchTotalCost = round($allocatedQty * $batchUnitCost, 4);
 
