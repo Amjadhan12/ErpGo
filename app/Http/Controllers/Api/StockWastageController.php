@@ -208,7 +208,7 @@ $unitCost = round($totalCost / $quantity, 6);
                     'notes' => $item['notes'] ?? null,
                 ]);
 
-                InventoryMovement::create([
+                $movement = InventoryMovement::create([
                     'warehouse_id' => $warehouse->id,
                     'product_id' => $product->id,
                     'movement_type' => 'wastage_out',
@@ -235,7 +235,7 @@ foreach ($allocations as $allocation) {
         ),
     ]);
 
-    $movement = InventoryMovement::create([
+     InventoryMovement::create([
         'inventory_movement_id' => $movement->id,
         'product_batch_id' => $batch->id,
         'direction' => 'out',
