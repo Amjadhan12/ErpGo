@@ -9,6 +9,7 @@ use App\Http\Controllers\Api\PartnerOpeningBalanceController;
 use App\Http\Controllers\Api\PartnerBalanceReportController;
 use App\Http\Controllers\Api\SupplierPaymentController;
 use App\Http\Controllers\Api\PurchaseController;
+use App\Http\Controllers\Api\PurchaseSummaryReportController;
 use App\Http\Controllers\Api\SaleController;
 use App\Http\Controllers\Api\SalePaymentController;
 use App\Http\Controllers\Api\FinancialAccountController;
@@ -133,6 +134,10 @@ Route::get(
     [CashBookReportController::class, 'index']
 );
 Route::get('/reports/profit-loss', [ProfitLossReportController::class, 'index']);
+Route::get(
+    '/reports/purchase-summary',
+    [PurchaseSummaryReportController::class, 'index']
+);
 Route::get(
     '/reports/cash-flow',
     [CashFlowReportController::class, 'index']
