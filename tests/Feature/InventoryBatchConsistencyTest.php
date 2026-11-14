@@ -403,6 +403,85 @@ class InventoryBatchConsistencyTest extends TestCase
         $this->assertStockConsistent($this->warehouse, $product);
     }
 
+    public function test_cash_and_partial_sales_record_payment_and_balance_transactions(): void
+    {
+        $product = $this->createProduct('Payment Type Sale Product');
+        $this->postOpeningStock($product, $this->warehouse, 5, 'PAYMENT-LOT', null)
+            ->assertCreated();
+        $account = \App\Models\FinancialAccount::create([
+            'currency_id' => $this->currency->id,
+            'name' => 'Sales Test Cash Account',
+            'account_type' => 'cash',
+            'is_active' => true,
+        ]);
+
+        foreach ([
+            ['type' => 'partial', 'paid' => 5, 'sale' => 'SALE-PARTIAL-001'],
+            ['type' => 'cash', 'paid' => 20, 'sale' => 'SALE-CASH-001'],
+        ] as $index => $payment) {
+            $payload = $this->salePayload($product, 1, $payment['sale']);
+            $payload['payment_type'] = $payment['type'];
+            $payload['paid_amount'] = $payment['paid'];
+            $payload['payment_number'] = 'SALE-PAYMENT-' . ($index + 1);
+            $payload['financial_account_id'] = $account->id;
+            $payload['payment_date'] = '2026-11-14';
+
+            $this->postJson('/api/sales', $payload)->assertCreated();
+        }
+
+        $this->assertSame(2, \App\Models\SalePayment::query()->count());
+        $this->assertSame(2, \App\Models\FinancialTransaction::query()
+            ->where('transaction_type', 'sale_payment')
+            ->count());
+        $this->assertSame(4, \App\Models\PartnerTransaction::query()
+            ->whereIn('transaction_type', ['sale', 'payment'])
+            ->count());
+        $this->assertSame(40.0, (float) \App\Models\PartnerTransaction::query()
+            ->where('transaction_type', 'sale')
+            ->sum('amount'));
+        $this->assertSame(25.0, (float) \App\Models\PartnerTransaction::query()
+            ->where('transaction_type', 'payment')
+            ->sum('amount'));
+        $this->assertSame(25.0, (float) \App\Models\FinancialTransaction::query()
+            ->where('transaction_type', 'sale_payment')
+            ->sum('amount'));
+        $this->assertStockConsistent($this->warehouse, $product);
+    }
+
+    public function test_cash_and_partial_sales_reject_inconsistent_paid_amounts(): void
+    {
+        $product = $this->createProduct('Invalid Payment Sale Product');
+        $this->postOpeningStock($product, $this->warehouse, 5, 'INVALID-PAYMENT-LOT', null)
+            ->assertCreated();
+        $account = \App\Models\FinancialAccount::create([
+            'currency_id' => $this->currency->id,
+            'name' => 'Invalid Payment Test Account',
+            'account_type' => 'cash',
+            'is_active' => true,
+        ]);
+
+        foreach ([
+            ['type' => 'cash', 'paid' => 19, 'sale' => 'SALE-CASH-INVALID'],
+            ['type' => 'partial', 'paid' => 20, 'sale' => 'SALE-PARTIAL-INVALID'],
+            ['type' => 'credit', 'paid' => 1, 'sale' => 'SALE-CREDIT-INVALID'],
+        ] as $index => $payment) {
+            $payload = $this->salePayload($product, 1, $payment['sale']);
+            $payload['payment_type'] = $payment['type'];
+            $payload['paid_amount'] = $payment['paid'];
+            $payload['payment_number'] = 'INVALID-SALE-PAYMENT-' . ($index + 1);
+            $payload['financial_account_id'] = $account->id;
+            $payload['payment_date'] = '2026-11-14';
+
+            $this->postJson('/api/sales', $payload)
+                ->assertUnprocessable()
+                ->assertJsonValidationErrors('paid_amount');
+        }
+
+        $this->assertSame(0, Sale::query()->count());
+        $this->assertSame(0, \App\Models\SalePayment::query()->count());
+        $this->assertStockConsistent($this->warehouse, $product);
+    }
+
     public function test_stock_mutation_rejects_preexisting_balance_batch_mismatch(): void
     {
         $product = $this->createProduct('Mismatch Product');

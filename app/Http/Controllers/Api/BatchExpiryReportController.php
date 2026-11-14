@@ -20,7 +20,7 @@ class BatchExpiryReportController extends Controller
         ]);
 
         $today = Carbon::today()->toDateString();
-        $days = $validated['days'] ?? 30;
+        $days = (int) ($validated['days'] ?? 30);
         $expiryLimit = Carbon::today()->addDays($days)->toDateString();
 
         $baseQuery = DB::table('product_batches as pb')
