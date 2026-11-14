@@ -4,16 +4,18 @@ namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
 use App\Models\BusinessPartner;
-use App\Models\InventoryBalance;
 use App\Models\InventoryMovement;
+use App\Models\InventoryMovementBatch;
 use App\Models\PartnerTransaction;
 use App\Models\Purchase;
 use App\Models\PurchaseReturn;
 use App\Models\PurchaseReturnItem;
+use App\Models\ProductBatch;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
+use App\Services\InventoryBatchService;
 
 class PurchaseReturnController extends Controller
 {
@@ -46,7 +48,10 @@ class PurchaseReturnController extends Controller
         return response()->json(['data' => $return]);
     }
 
-    public function store(Request $request): JsonResponse
+    public function store(
+        Request $request,
+        InventoryBatchService $inventoryBatchService
+    ): JsonResponse
     {
         $validated = $request->validate([
             'return_number' => [
@@ -69,7 +74,11 @@ class PurchaseReturnController extends Controller
             'items.*.notes' => ['nullable', 'string', 'max:1000'],
         ]);
 
-        $result = DB::transaction(function () use ($validated, $request) {
+        $result = DB::transaction(function () use (
+            $validated,
+            $request,
+            $inventoryBatchService
+        ) {
             $purchase = Purchase::whereKey($validated['purchase_id'])
                 ->lockForUpdate()
                 ->firstOrFail();
@@ -147,12 +156,11 @@ class PurchaseReturnController extends Controller
                 $lineTotal = round($effectiveUnitCost * $quantity, 4);
                 $lineTotalAfn = round($effectiveUnitCostAfn * $quantity, 4);
 
-                $balance = InventoryBalance::where(
-                    'warehouse_id',
-                    $purchase->warehouse_id
-                )->where('product_id', $purchaseItem->product_id)
-                    ->lockForUpdate()
-                    ->first();
+                $stock = $inventoryBatchService->lockStock(
+                    $purchase->warehouse_id,
+                    $purchaseItem->product_id,
+                );
+                $balance = $stock['balance'];
 
                 if (! $balance || (float) $balance->quantity < $quantity) {
                     throw ValidationException::withMessages([
@@ -162,6 +170,23 @@ class PurchaseReturnController extends Controller
                     ]);
                 }
 
+                $originalPurchaseBatches = $stock['batches']->filter(
+                    fn (ProductBatch $batch) => $batch->source_type === Purchase::class
+                        && (int) $batch->source_id === (int) $purchase->id
+                );
+                $allocations = $inventoryBatchService->allocate(
+                    $originalPurchaseBatches,
+                    $quantity,
+                    "Return quantity exceeds the remaining stock from the original purchase batch for product ID {$purchaseItem->product_id}.",
+                );
+                $inventoryCost = round(
+                    array_sum(array_column($allocations, 'total_cost_afn')),
+                    4,
+                );
+                $inventoryUnitCost = $quantity > 0
+                    ? round($inventoryCost / $quantity, 6)
+                    : 0;
+
                 $prepared[] = [
                     'purchase_item' => $purchaseItem,
                     'quantity' => $quantity,
@@ -170,6 +195,10 @@ class PurchaseReturnController extends Controller
                     'line_total' => $lineTotal,
                     'line_total_afn' => $lineTotalAfn,
                     'balance' => $balance,
+                    'stock' => $stock,
+                    'allocations' => $allocations,
+                    'inventory_cost' => $inventoryCost,
+                    'inventory_unit_cost' => $inventoryUnitCost,
                     'notes' => $input['notes'] ?? null,
                 ];
 
@@ -207,40 +236,38 @@ class PurchaseReturnController extends Controller
                     'notes' => $line['notes'],
                 ]);
 
-        $balance = $line['balance'];
-
-$oldQuantity = (float) $balance->quantity;
-$oldAverageCost = (float) $balance->average_unit_cost;
-
-$newQuantity = $oldQuantity - $line['quantity'];
-
-$inventoryCost = round(
-    $line['quantity'] * $oldAverageCost,
-    4
-);
-
-$balance->update([
-    'quantity' => round($newQuantity, 4),
-    'average_unit_cost' => $newQuantity > 0
-        ? $oldAverageCost
-        : 0,
-]);
-
-
-                InventoryMovement::create([
+                $movement = InventoryMovement::create([
                     'warehouse_id' => $purchase->warehouse_id,
                     'product_id' => $line['purchase_item']->product_id,
                     'movement_type' => 'purchase_return',
                     'quantity_in' => 0,
                     'quantity_out' => $line['quantity'],
-                    'unit_cost' => $oldAverageCost,
-'total_cost' => $inventoryCost,
+                    'unit_cost' => $line['inventory_unit_cost'],
+                    'total_cost' => $line['inventory_cost'],
                     'reference_type' => PurchaseReturn::class,
                     'reference_id' => $return->id,
                     'movement_date' => $validated['return_date'] . ' 00:00:00',
                     'notes' => 'Purchase return ' . $return->return_number,
                     'created_by' => $request->user()->id,
                 ]);
+
+                foreach ($line['allocations'] as $allocation) {
+                    InventoryMovementBatch::create([
+                        'inventory_movement_id' => $movement->id,
+                        'product_batch_id' => $allocation['batch']->id,
+                        'direction' => 'out',
+                        'quantity' => $allocation['quantity'],
+                        'unit_cost_afn' => $allocation['unit_cost_afn'],
+                        'total_cost_afn' => $allocation['total_cost_afn'],
+                    ]);
+                }
+
+                $inventoryBatchService->syncBalance(
+                    $line['balance'],
+                    $purchase->warehouse_id,
+                    $line['purchase_item']->product_id,
+                    $line['stock']['batches'],
+                );
             }
 
             // Debit reduces the amount owed to the supplier.

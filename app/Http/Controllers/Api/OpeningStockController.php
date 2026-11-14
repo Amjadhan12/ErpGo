@@ -6,11 +6,14 @@ use App\Http\Controllers\Controller;
 use App\Models\OpeningStock;
 use App\Models\InventoryBalance;
 use App\Models\InventoryMovement;
+use App\Models\InventoryMovementBatch;
+use App\Models\ProductBatch;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
 use Illuminate\Validation\ValidationException;
 use Illuminate\Validation\Rule;
+use App\Services\InventoryBatchService;
 
 class OpeningStockController extends Controller
 {
@@ -42,7 +45,10 @@ class OpeningStockController extends Controller
         ]);
     }
 
-    public function store(Request $request)
+    public function store(
+        Request $request,
+        InventoryBatchService $inventoryBatchService
+    )
     {
         $validated = $request->validate([
     'warehouse_id' => [
@@ -59,11 +65,17 @@ class OpeningStockController extends Controller
         'distinct',
         Rule::exists('products', 'id')->whereNull('deleted_at'),
     ],
-    'items.*.quantity' => ['required', 'numeric', 'gt:0'],
+    'items.*.quantity' => ['required', 'numeric', 'gt:0', 'decimal:0,4'],
     'items.*.unit_cost_afn' => ['required', 'numeric', 'gte:0'],
+    'items.*.batch_number' => ['nullable', 'string', 'max:100'],
+    'items.*.expiry_date' => ['nullable', 'date_format:Y-m-d'],
 ]);
 
-        $openingStock = DB::transaction(function () use ($validated, $request) {
+        $openingStock = DB::transaction(function () use (
+            $validated,
+            $request,
+            $inventoryBatchService
+        ) {
 
             $warehouse = DB::table('warehouses')
     ->where('id', $validated['warehouse_id'])
@@ -101,42 +113,14 @@ class OpeningStockController extends Controller
                     ]);
                 }
 
+                $stock = $inventoryBatchService->lockStock(
+                    $validated['warehouse_id'],
+                    $product->id,
+                );
+
                 $quantity = (float) $item['quantity'];
                 $unitCost = (float) $item['unit_cost_afn'];
                 $totalCost = $quantity * $unitCost;
-
-                $balance = InventoryBalance::where('warehouse_id', $validated['warehouse_id'])
-                    ->where('product_id', $item['product_id'])
-                    ->lockForUpdate()
-                    ->first();
-
-                if (!$balance) {
-                    $balance = new InventoryBalance([
-                        'warehouse_id' => $validated['warehouse_id'],
-                        'product_id' => $item['product_id'],
-                        'quantity' => 0,
-                        'average_unit_cost' => 0,
-                    ]);
-                }
-
-                $oldQuantity = (float) $balance->quantity;
-                $oldAverageCost = (float) $balance->average_unit_cost;
-
-                if ($oldQuantity < 0) {
-                    throw ValidationException::withMessages([
-                        'items' => ['Cannot add opening stock while existing inventory quantity is negative.'],
-                    ]);
-                }
-
-                $newQuantity = $oldQuantity + $quantity;
-
-                $newAverageCost = $newQuantity > 0
-                    ? (($oldQuantity * $oldAverageCost) + $totalCost) / $newQuantity
-                    : 0;
-
-                $balance->quantity = $newQuantity;
-                $balance->average_unit_cost = $newAverageCost;
-                $balance->save();
 
                 $openingStock->items()->create([
                     'product_id' => $item['product_id'],
@@ -145,7 +129,7 @@ class OpeningStockController extends Controller
                     'total_cost_afn' => $totalCost,
                 ]);
 
-                InventoryMovement::create([
+                $movement = InventoryMovement::create([
                     'warehouse_id' => $validated['warehouse_id'],
                     'product_id' => $item['product_id'],
                     'movement_type' => 'opening_stock',
@@ -159,6 +143,36 @@ class OpeningStockController extends Controller
                     'notes' => $validated['notes'] ?? 'Opening stock entry',
                     'created_by' => $request->user()?->id,
                 ]);
+
+                $batch = ProductBatch::create([
+                    'product_id' => $product->id,
+                    'warehouse_id' => $validated['warehouse_id'],
+                    'batch_number' => $item['batch_number'] ?? null,
+                    'expiry_date' => $item['expiry_date'] ?? null,
+                    'received_quantity' => $quantity,
+                    'remaining_quantity' => $quantity,
+                    'unit_cost_afn' => $unitCost,
+                    'source_type' => 'opening_stock',
+                    'source_id' => $openingStock->id,
+                    'created_by' => $request->user()?->id,
+                ]);
+
+                InventoryMovementBatch::create([
+                    'inventory_movement_id' => $movement->id,
+                    'product_batch_id' => $batch->id,
+                    'direction' => 'in',
+                    'quantity' => $quantity,
+                    'unit_cost_afn' => $unitCost,
+                    'total_cost_afn' => $totalCost,
+                ]);
+
+                $stock['batches']->push($batch);
+                $inventoryBatchService->syncBalance(
+                    $stock['balance'],
+                    $validated['warehouse_id'],
+                    $product->id,
+                    $stock['batches'],
+                );
             }
 
             return $openingStock;

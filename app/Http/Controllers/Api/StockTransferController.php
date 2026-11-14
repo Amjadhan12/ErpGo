@@ -4,8 +4,11 @@ namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
 use App\Models\StockTransfer;
-use App\Models\InventoryBalance;
 use App\Models\InventoryMovement;
+use App\Models\InventoryMovementBatch;
+use App\Models\ProductBatch;
+use App\Models\StockTransferItemBatch;
+use App\Services\InventoryBatchService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
@@ -44,7 +47,10 @@ class StockTransferController extends Controller
         ]);
     }
 
-    public function store(Request $request)
+    public function store(
+        Request $request,
+        InventoryBatchService $inventoryBatchService
+    )
     {
         $validated = $request->validate([
             'from_warehouse_id' => [
@@ -79,7 +85,11 @@ class StockTransferController extends Controller
             ],
         ]);
 
-        $transfer = DB::transaction(function () use ($validated, $request) {
+        $transfer = DB::transaction(function () use (
+            $validated,
+            $request,
+            $inventoryBatchService
+        ) {
 
             /*
             |--------------------------------------------------------------------------
@@ -173,13 +183,17 @@ class StockTransferController extends Controller
                 |--------------------------------------------------------------------------
                 */
 
-                $sourceBalance = InventoryBalance::where(
-                    'warehouse_id',
-                    $validated['from_warehouse_id']
-                )
-                    ->where('product_id', $item['product_id'])
-                    ->lockForUpdate()
-                    ->first();
+                $sourceStock = $inventoryBatchService->lockStock(
+                    $validated['from_warehouse_id'],
+                    $item['product_id'],
+                );
+                $destinationStock = $inventoryBatchService->lockStock(
+                    $validated['to_warehouse_id'],
+                    $item['product_id'],
+                );
+                $sourceBalance = $sourceStock['balance'];
+                $sourceBatches = $sourceStock['batches'];
+                $destinationBatches = $destinationStock['batches'];
 
                 if (!$sourceBalance) {
                     throw ValidationException::withMessages([
@@ -190,7 +204,6 @@ class StockTransferController extends Controller
                 }
 
                 $sourceQuantity = (float) $sourceBalance->quantity;
-                $unitCost = (float) $sourceBalance->average_unit_cost;
 
                 if ($sourceQuantity < $quantity) {
                     throw ValidationException::withMessages([
@@ -200,88 +213,18 @@ class StockTransferController extends Controller
                     ]);
                 }
 
-                /*
-                |--------------------------------------------------------------------------
-                | 5. Calculate Transfer Cost
-                |--------------------------------------------------------------------------
-                */
-
-                $totalCost = round($quantity * $unitCost, 6);
-
-                /*
-                |--------------------------------------------------------------------------
-                | 6. Decrease Source Warehouse Stock
-                |--------------------------------------------------------------------------
-                */
-
-                $newSourceQuantity = round(
-                    $sourceQuantity - $quantity,
-                    4
+                $allocations = $inventoryBatchService->allocate(
+                    $sourceBatches,
+                    $quantity,
+                    "Insufficient batch stock for {$product->name} in the source warehouse.",
                 );
-
-                $sourceBalance->quantity = $newSourceQuantity;
-
-                if ($newSourceQuantity <= 0) {
-                    $sourceBalance->average_unit_cost = 0;
-                }
-
-                $sourceBalance->save();
-
-                /*
-                |--------------------------------------------------------------------------
-                | 7. Lock or Create Destination Balance
-                |--------------------------------------------------------------------------
-                */
-
-                $destinationBalance = InventoryBalance::where(
-                    'warehouse_id',
-                    $validated['to_warehouse_id']
-                )
-                    ->where('product_id', $item['product_id'])
-                    ->lockForUpdate()
-                    ->first();
-
-                if (!$destinationBalance) {
-                    $destinationBalance = new InventoryBalance([
-                        'warehouse_id' => $validated['to_warehouse_id'],
-                        'product_id' => $item['product_id'],
-                        'quantity' => 0,
-                        'average_unit_cost' => 0,
-                    ]);
-                }
-
-                /*
-                |--------------------------------------------------------------------------
-                | 8. Calculate Destination Weighted Average Cost
-                |--------------------------------------------------------------------------
-                */
-
-                $oldDestinationQuantity =
-                    (float) $destinationBalance->quantity;
-
-                $oldDestinationAverage =
-                    (float) $destinationBalance->average_unit_cost;
-
-                $newDestinationQuantity = round(
-                    $oldDestinationQuantity + $quantity,
-                    4
+                $totalCost = round(
+                    array_sum(array_column($allocations, 'total_cost_afn')),
+                    4,
                 );
-
-                $newDestinationAverage = $newDestinationQuantity > 0
-                    ? (
-                        ($oldDestinationQuantity * $oldDestinationAverage)
-                        + $totalCost
-                    ) / $newDestinationQuantity
+                $unitCost = $quantity > 0
+                    ? round($totalCost / $quantity, 6)
                     : 0;
-
-                $destinationBalance->quantity = $newDestinationQuantity;
-
-                $destinationBalance->average_unit_cost = round(
-                    $newDestinationAverage,
-                    6
-                );
-
-                $destinationBalance->save();
 
                 /*
                 |--------------------------------------------------------------------------
@@ -289,7 +232,7 @@ class StockTransferController extends Controller
                 |--------------------------------------------------------------------------
                 */
 
-                $transfer->items()->create([
+                $transferItem = $transfer->items()->create([
                     'product_id' => $item['product_id'],
                     'quantity' => $quantity,
                     'unit_cost_afn' => $unitCost,
@@ -302,7 +245,7 @@ class StockTransferController extends Controller
                 |--------------------------------------------------------------------------
                 */
 
-                InventoryMovement::create([
+                $sourceMovement = InventoryMovement::create([
                     'warehouse_id' => $validated['from_warehouse_id'],
                     'product_id' => $item['product_id'],
                     'movement_type' => 'transfer_out',
@@ -325,7 +268,7 @@ class StockTransferController extends Controller
                 |--------------------------------------------------------------------------
                 */
 
-                InventoryMovement::create([
+                $destinationMovement = InventoryMovement::create([
                     'warehouse_id' => $validated['to_warehouse_id'],
                     'product_id' => $item['product_id'],
                     'movement_type' => 'transfer_in',
@@ -341,6 +284,65 @@ class StockTransferController extends Controller
                         $validated['from_warehouse_id'],
                     'created_by' => $request->user()?->id,
                 ]);
+
+                $inventoryBatchService->syncBalance(
+                    $sourceBalance,
+                    $validated['from_warehouse_id'],
+                    $item['product_id'],
+                    $sourceBatches,
+                );
+
+                foreach ($allocations as $allocation) {
+                    /** @var ProductBatch $sourceBatch */
+                    $sourceBatch = $allocation['batch'];
+                    $destinationBatch = ProductBatch::create([
+                        'product_id' => $item['product_id'],
+                        'warehouse_id' => $validated['to_warehouse_id'],
+                        'batch_number' => $sourceBatch->batch_number,
+                        'expiry_date' => $sourceBatch->expiry_date?->format('Y-m-d'),
+                        'received_quantity' => $allocation['quantity'],
+                        'remaining_quantity' => $allocation['quantity'],
+                        'unit_cost_afn' => $allocation['unit_cost_afn'],
+                        'source_type' => 'stock_transfer',
+                        'source_id' => $transfer->id,
+                        'created_by' => $request->user()?->id,
+                    ]);
+                    $destinationBatches->push($destinationBatch);
+
+                    StockTransferItemBatch::create([
+                        'stock_transfer_item_id' => $transferItem->id,
+                        'source_product_batch_id' => $sourceBatch->id,
+                        'destination_product_batch_id' => $destinationBatch->id,
+                        'quantity' => $allocation['quantity'],
+                        'unit_cost_afn' => $allocation['unit_cost_afn'],
+                        'total_cost_afn' => $allocation['total_cost_afn'],
+                    ]);
+
+                    InventoryMovementBatch::create([
+                        'inventory_movement_id' => $sourceMovement->id,
+                        'product_batch_id' => $sourceBatch->id,
+                        'direction' => 'out',
+                        'quantity' => $allocation['quantity'],
+                        'unit_cost_afn' => $allocation['unit_cost_afn'],
+                        'total_cost_afn' => $allocation['total_cost_afn'],
+                    ]);
+
+                    InventoryMovementBatch::create([
+                        'inventory_movement_id' => $destinationMovement->id,
+                        'product_batch_id' => $destinationBatch->id,
+                        'direction' => 'in',
+                        'quantity' => $allocation['quantity'],
+                        'unit_cost_afn' => $allocation['unit_cost_afn'],
+                        'total_cost_afn' => $allocation['total_cost_afn'],
+                    ]);
+                }
+
+                $inventoryBatchService->syncBalance(
+                    $destinationStock['balance'],
+                    $validated['to_warehouse_id'],
+                    $item['product_id'],
+                    $destinationBatches,
+                );
             }
 
             return $transfer;

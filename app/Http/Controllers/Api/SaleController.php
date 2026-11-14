@@ -7,7 +7,6 @@ use App\Models\BusinessPartner;
 use App\Models\Currency;
 use App\Models\FinancialAccount;
 use App\Models\FinancialTransaction;
-use App\Models\InventoryBalance;
 use App\Models\InventoryMovement;
 use App\Models\PartnerTransaction;
 use App\Models\Product;
@@ -20,9 +19,9 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
 use Illuminate\Validation\ValidationException;
-use App\Models\ProductBatch;
 use App\Models\SaleItemBatch;
 use App\Models\InventoryMovementBatch;
+use App\Services\InventoryBatchService;
 
 
 class SaleController extends Controller
@@ -44,7 +43,10 @@ class SaleController extends Controller
         return response()->json($sales);
     }
 
-    public function store(Request $request): JsonResponse
+    public function store(
+        Request $request,
+        InventoryBatchService $inventoryBatchService
+    ): JsonResponse
     {
         $validated = $request->validate([
             'sale_number' => [
@@ -117,7 +119,8 @@ class SaleController extends Controller
             $validated,
             $request,
             $paidAmount,
-            $headerDiscount
+            $headerDiscount,
+            $inventoryBatchService
         ) {
             $customer = BusinessPartner::whereKey(
                 $validated['business_partner_id']
@@ -344,10 +347,11 @@ $allocatedHeaderDiscount = 0;
 $lastIndex = count($preparedItems) - 1;
 
 foreach ($preparedItems as $index => $item) {
-    $balance = InventoryBalance::where('warehouse_id', $warehouse->id)
-        ->where('product_id', $item['product_id'])
-        ->lockForUpdate()
-        ->first();
+    $stock = $inventoryBatchService->lockStock(
+        $warehouse->id,
+        $item['product_id'],
+    );
+    $balance = $stock['balance'];
 
     if (! $balance) {
         throw ValidationException::withMessages([
@@ -389,57 +393,26 @@ foreach ($preparedItems as $index => $item) {
         4
     );
 
-    // Get eligible batches using FEFO.
-    $batches = ProductBatch::where('product_id', $item['product_id'])
-        ->where('warehouse_id', $warehouse->id)
-        ->where('remaining_quantity', '>', 0)
-        ->where(function ($query) use ($validated) {
-            $query->whereNull('expiry_date')
-                ->orWhereDate('expiry_date', '>=', $validated['sale_date']);
-        })
-        ->orderByRaw('CASE WHEN expiry_date IS NULL THEN 1 ELSE 0 END')
-        ->orderBy('expiry_date')
-        ->orderBy('id')
-        ->lockForUpdate()
-        ->get();
-
-    $batchAvailable = (float) $batches->sum('remaining_quantity');
-
-    if ($batchAvailable < $item['quantity']) {
-        throw ValidationException::withMessages([
-            'items' => 'Not enough non-expired batch stock for product '
-                . $item['product']->name
-                . '. Available batch stock: ' . $batchAvailable,
-        ]);
-    }
-
-    // Calculate actual cost from selected batches.
-    $remainingToAllocate = $item['quantity'];
-    $totalCost = 0;
-    $allocations = [];
-
-    foreach ($batches as $batch) {
-        if ($remainingToAllocate <= 0) {
-            break;
-        }
-
-        $available = (float) $batch->remaining_quantity;
-        $allocatedQty = min($available, $remainingToAllocate);
-        $batchUnitCost = (float) $batch->unit_cost_afn;
-        $batchTotalCost = round($allocatedQty * $batchUnitCost, 4);
-
-        $allocations[] = [
-            'batch' => $batch,
-            'quantity' => $allocatedQty,
-            'unit_cost_afn' => $batchUnitCost,
-            'total_cost_afn' => $batchTotalCost,
-        ];
-
-        $totalCost += $batchTotalCost;
-        $remainingToAllocate -= $allocatedQty;
-    }
-
-    $totalCost = round($totalCost, 4);
+    // Keep FEFO order from lockStock, excluding lots expired on the sale date.
+    $eligibleBatches = $stock['batches']->filter(
+        fn ($batch) => (float) $batch->remaining_quantity > 0
+            && (
+                $batch->expiry_date === null
+                || $batch->expiry_date->format('Y-m-d') >= $validated['sale_date']
+            )
+    );
+    $allocations = $inventoryBatchService->allocate(
+        $eligibleBatches,
+        $item['quantity'],
+        'Not enough non-expired batch stock for product '
+            . $item['product']->name
+            . '. Available batch stock: '
+            . $inventoryBatchService->batchQuantity($eligibleBatches),
+    );
+    $totalCost = round(
+        array_sum(array_column($allocations, 'total_cost_afn')),
+        4,
+    );
     $averageUnitCost = round($totalCost / $item['quantity'], 6);
 
     $unitPriceAfn = round(
@@ -467,34 +440,16 @@ foreach ($preparedItems as $index => $item) {
         'notes' => $item['notes'],
     ]);
 
-    // Deduct quantities from batches and record allocations.
+    // Record the FEFO allocation; allocate() already reduced these batches.
     foreach ($allocations as $allocation) {
-        $batch = $allocation['batch'];
-
-        $batch->update([
-            'remaining_quantity' => round(
-                (float) $batch->remaining_quantity
-                    - $allocation['quantity'],
-                4
-            ),
-        ]);
-
         SaleItemBatch::create([
             'sale_item_id' => $saleItem->id,
-            'product_batch_id' => $batch->id,
+            'product_batch_id' => $allocation['batch']->id,
             'quantity' => $allocation['quantity'],
             'unit_cost_afn' => $allocation['unit_cost_afn'],
             'total_cost_afn' => $allocation['total_cost_afn'],
         ]);
     }
-
-    // Reduce aggregate inventory balance.
-    $balance->update([
-        'quantity' => round(
-            (float) $balance->quantity - $item['quantity'],
-            4
-        ),
-    ]);
 
     // Record inventory out movement.
     $movement = InventoryMovement::create([
@@ -523,6 +478,13 @@ foreach ($preparedItems as $index => $item) {
             'total_cost_afn' => $allocation['total_cost_afn'],
         ]);
     }
+
+    $inventoryBatchService->syncBalance(
+        $balance,
+        $warehouse->id,
+        $item['product_id'],
+        $stock['batches'],
+    );
 }
 
 

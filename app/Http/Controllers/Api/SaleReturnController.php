@@ -4,16 +4,20 @@ namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
 use App\Models\BusinessPartner;
-use App\Models\InventoryBalance;
 use App\Models\InventoryMovement;
+use App\Models\InventoryMovementBatch;
 use App\Models\PartnerTransaction;
 use App\Models\Sale;
 use App\Models\SaleReturn;
 use App\Models\SaleReturnItem;
+use App\Models\ProductBatch;
+use App\Models\SaleItemBatch;
+use App\Models\SaleReturnItemBatch;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
+use App\Services\InventoryBatchService;
 
 class SaleReturnController extends Controller
 {
@@ -46,7 +50,10 @@ class SaleReturnController extends Controller
         return response()->json(['data' => $return]);
     }
 
-    public function store(Request $request): JsonResponse
+    public function store(
+        Request $request,
+        InventoryBatchService $inventoryBatchService
+    ): JsonResponse
     {
         $validated = $request->validate([
             'return_number' => [
@@ -69,7 +76,11 @@ class SaleReturnController extends Controller
             'items.*.notes' => ['nullable', 'string', 'max:1000'],
         ]);
 
-        $result = DB::transaction(function () use ($validated, $request) {
+        $result = DB::transaction(function () use (
+            $validated,
+            $request,
+            $inventoryBatchService
+        ) {
             $sale = Sale::whereKey($validated['sale_id'])
                 ->lockForUpdate()
                 ->firstOrFail();
@@ -146,25 +157,85 @@ class SaleReturnController extends Controller
                 $lineTotalAfn = round($effectiveUnitPriceAfn * $quantity, 4);
                 $totalCostAfn = round($unitCostAfn * $quantity, 4);
 
-                $balance = InventoryBalance::where(
-                    'warehouse_id',
-                    $sale->warehouse_id
-                )->where('product_id', $saleItem->product_id)
+                $stock = $inventoryBatchService->lockStock(
+                    $sale->warehouse_id,
+                    $saleItem->product_id,
+                );
+                $batchMap = $stock['batches']->keyBy('id');
+                $saleBatchAllocations = SaleItemBatch::query()
+                    ->where('sale_item_id', $saleItem->id)
+                    ->orderBy('id')
                     ->lockForUpdate()
-                    ->first();
+                    ->get();
+                $remainingToRestore = round($quantity, 4);
+                $batchAllocations = [];
 
-                if (! $balance) {
-                    $balance = InventoryBalance::create([
-                        'warehouse_id' => $sale->warehouse_id,
-                        'product_id' => $saleItem->product_id,
-                        'quantity' => 0,
-                        'average_unit_cost' => $unitCostAfn,
-                    ]);
+                foreach ($saleBatchAllocations as $saleBatchAllocation) {
+                    if ($remainingToRestore <= 0) {
+                        break;
+                    }
 
-                    $balance = InventoryBalance::whereKey($balance->id)
-                        ->lockForUpdate()
-                        ->firstOrFail();
+                    $availableToRestore = round(
+                        (float) $saleBatchAllocation->quantity
+                            - (float) $saleBatchAllocation->returned_quantity,
+                        4,
+                    );
+                    if ($availableToRestore <= 0) {
+                        continue;
+                    }
+
+                    $productBatch = $batchMap->get(
+                        $saleBatchAllocation->product_batch_id
+                    );
+                    if (!$productBatch) {
+                        throw ValidationException::withMessages([
+                            'items' => [
+                                "The original batch for sale item {$saleItem->id} is unavailable.",
+                            ],
+                        ]);
+                    }
+
+                    $allocated = round(
+                        min($availableToRestore, $remainingToRestore),
+                        4,
+                    );
+                    $productBatch->remaining_quantity = round(
+                        (float) $productBatch->remaining_quantity + $allocated,
+                        4,
+                    );
+                    $productBatch->save();
+
+                    $saleBatchAllocation->returned_quantity = round(
+                        (float) $saleBatchAllocation->returned_quantity + $allocated,
+                        4,
+                    );
+                    $saleBatchAllocation->save();
+
+                    $batchUnitCost = (float) $saleBatchAllocation->unit_cost_afn;
+                    $batchAllocations[] = [
+                        'sale_batch_allocation' => $saleBatchAllocation,
+                        'batch' => $productBatch,
+                        'quantity' => $allocated,
+                        'unit_cost_afn' => $batchUnitCost,
+                        'total_cost_afn' => round($allocated * $batchUnitCost, 4),
+                    ];
+                    $remainingToRestore = round(
+                        $remainingToRestore - $allocated,
+                        4,
+                    );
                 }
+
+                // Older sale lines without batch allocations return as an explicitly
+                // unidentified return lot; no batch number or expiry is fabricated.
+                $untrackedReturnQuantity = max(0, $remainingToRestore);
+                $inventoryCostAfn = round(
+                    array_sum(array_column($batchAllocations, 'total_cost_afn'))
+                        + ($untrackedReturnQuantity * $unitCostAfn),
+                    4,
+                );
+                $inventoryUnitCostAfn = $quantity > 0
+                    ? round($inventoryCostAfn / $quantity, 6)
+                    : 0;
 
                 $prepared[] = [
                     'sale_item' => $saleItem,
@@ -175,7 +246,11 @@ class SaleReturnController extends Controller
                     'line_total_afn' => $lineTotalAfn,
                     'unit_cost_afn' => $unitCostAfn,
                     'total_cost_afn' => $totalCostAfn,
-                    'balance' => $balance,
+                    'stock' => $stock,
+                    'batch_allocations' => $batchAllocations,
+                    'untracked_return_quantity' => $untrackedReturnQuantity,
+                    'inventory_cost_afn' => $inventoryCostAfn,
+                    'inventory_unit_cost_afn' => $inventoryUnitCostAfn,
                     'notes' => $input['notes'] ?? null,
                 ];
 
@@ -201,7 +276,7 @@ class SaleReturnController extends Controller
             ]);
 
             foreach ($prepared as $line) {
-                $return->items()->create([
+                $returnItem = $return->items()->create([
                     'sale_item_id' => $line['sale_item']->id,
                     'product_id' => $line['sale_item']->product_id,
                     'quantity' => $line['quantity'],
@@ -210,44 +285,81 @@ class SaleReturnController extends Controller
                     'line_total' => $line['line_total'],
                     'unit_price_afn' => $line['unit_price_afn'],
                     'line_total_afn' => $line['line_total_afn'],
-                    'unit_cost_afn' => $line['unit_cost_afn'],
-                    'total_cost_afn' => $line['total_cost_afn'],
+                    'unit_cost_afn' => $line['inventory_unit_cost_afn'],
+                    'total_cost_afn' => $line['inventory_cost_afn'],
                     'notes' => $line['notes'],
                 ]);
 
-                $balance = $line['balance'];
+                foreach ($line['batch_allocations'] as $allocation) {
+                    SaleReturnItemBatch::create([
+                        'sale_return_item_id' => $returnItem->id,
+                        'sale_item_batch_id' => $allocation['sale_batch_allocation']->id,
+                        'product_batch_id' => $allocation['batch']->id,
+                        'quantity' => $allocation['quantity'],
+                        'unit_cost_afn' => $allocation['unit_cost_afn'],
+                        'total_cost_afn' => $allocation['total_cost_afn'],
+                    ]);
+                }
 
-                $oldQuantity = (float) $balance->quantity;
-                $oldAverageCost = (float) $balance->average_unit_cost;
-                $newQuantity = $oldQuantity + $line['quantity'];
-
-                // Returned goods restore inventory at their original cost.
-                $newAverageCost = $newQuantity > 0
-                    ? (
-                        ($oldQuantity * $oldAverageCost)
-                        + ($line['quantity'] * $line['unit_cost_afn'])
-                    ) / $newQuantity
-                    : 0;
-
-                $balance->update([
-                    'quantity' => round($newQuantity, 4),
-                    'average_unit_cost' => round($newAverageCost, 6),
-                ]);
-
-                InventoryMovement::create([
+                $movement = InventoryMovement::create([
                     'warehouse_id' => $sale->warehouse_id,
                     'product_id' => $line['sale_item']->product_id,
                     'movement_type' => 'sale_return',
                     'quantity_in' => $line['quantity'],
                     'quantity_out' => 0,
-                    'unit_cost' => $line['unit_cost_afn'],
-                    'total_cost' => $line['total_cost_afn'],
+                    'unit_cost' => $line['inventory_unit_cost_afn'],
+                    'total_cost' => $line['inventory_cost_afn'],
                     'reference_type' => SaleReturn::class,
                     'reference_id' => $return->id,
                     'movement_date' => $validated['return_date'] . ' 00:00:00',
                     'notes' => 'Sale return ' . $return->return_number,
                     'created_by' => $request->user()->id,
                 ]);
+
+                $movementAllocations = $line['batch_allocations'];
+                if ($line['untracked_return_quantity'] > 0) {
+                    $unknownReturnBatch = ProductBatch::create([
+                        'product_id' => $line['sale_item']->product_id,
+                        'warehouse_id' => $sale->warehouse_id,
+                        'batch_number' => null,
+                        'expiry_date' => null,
+                        'received_quantity' => $line['untracked_return_quantity'],
+                        'remaining_quantity' => $line['untracked_return_quantity'],
+                        'unit_cost_afn' => $line['unit_cost_afn'],
+                        'source_type' => SaleReturn::class,
+                        'source_id' => $return->id,
+                        'created_by' => $request->user()->id,
+                    ]);
+                    $line['stock']['batches']->push($unknownReturnBatch);
+                    $movementAllocations[] = [
+                        'batch' => $unknownReturnBatch,
+                        'quantity' => $line['untracked_return_quantity'],
+                        'unit_cost_afn' => $line['unit_cost_afn'],
+                        'total_cost_afn' => round(
+                            $line['untracked_return_quantity']
+                                * $line['unit_cost_afn'],
+                            4,
+                        ),
+                    ];
+                }
+
+                foreach ($movementAllocations as $allocation) {
+                    InventoryMovementBatch::create([
+                        'inventory_movement_id' => $movement->id,
+                        'product_batch_id' => $allocation['batch']->id,
+                        'direction' => 'in',
+                        'quantity' => $allocation['quantity'],
+                        'unit_cost_afn' => $allocation['unit_cost_afn'],
+                        'total_cost_afn' => $allocation['total_cost_afn'],
+                    ]);
+                }
+
+                $inventoryBatchService->syncBalance(
+                    $line['stock']['balance'],
+                    $sale->warehouse_id,
+                    $line['sale_item']->product_id,
+                    $line['stock']['batches'],
+                );
             }
 
             // Credit reduces the customer's outstanding debt.

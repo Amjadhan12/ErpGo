@@ -19,6 +19,7 @@ use Illuminate\Support\Str;
 use Illuminate\Validation\ValidationException;
 use App\Models\ProductBatch;
 use App\Models\InventoryMovementBatch;
+use App\Services\InventoryBatchService;
 
 class PurchaseController extends Controller
 {
@@ -38,7 +39,10 @@ class PurchaseController extends Controller
         return response()->json($purchases);
     }
 
-    public function store(Request $request): JsonResponse
+    public function store(
+        Request $request,
+        InventoryBatchService $inventoryBatchService
+    ): JsonResponse
     {
         $validated = $request->validate([
             'purchase_number' => ['required', 'string', 'max:50', 'unique:purchases,purchase_number'],
@@ -95,12 +99,31 @@ class PurchaseController extends Controller
             }
         }
 
-        $result = DB::transaction(function () use ($validated, $request, $currency) {
+        $result = DB::transaction(function () use (
+            $validated,
+            $request,
+            $currency,
+            $inventoryBatchService
+        ) {
+            $warehouse = Warehouse::query()
+                ->whereKey($validated['warehouse_id'])
+                ->lockForUpdate()
+                ->firstOrFail();
+
+            if (!$warehouse->is_active) {
+                throw ValidationException::withMessages([
+                    'warehouse_id' => ['The warehouse must be active.'],
+                ]);
+            }
+
             $subtotal = 0;
             $lineData = [];
 
             foreach ($validated['items'] as $item) {
-                $product = Product::findOrFail($item['product_id']);
+                $product = Product::query()
+                    ->whereKey($item['product_id'])
+                    ->lockForUpdate()
+                    ->firstOrFail();
 
                 if (! $product->is_active) {
                     throw ValidationException::withMessages([
@@ -188,6 +211,11 @@ class PurchaseController extends Controller
                     ? round($finalLineTotalAfn / $line['quantity'], 6)
                     : 0;
 
+                $stock = $inventoryBatchService->lockStock(
+                    $validated['warehouse_id'],
+                    $line['product']->id,
+                );
+
                 $purchaseItem = $purchase->items()->create([
                     'product_id' => $line['product']->id,
                     'quantity' => $line['quantity'],
@@ -199,40 +227,6 @@ class PurchaseController extends Controller
                     'line_total' => $finalLineTotal,
                     'unit_cost_afn' => $effectiveUnitCostAfn,
                     'line_total_afn' => $finalLineTotalAfn,
-                ]);
-
-                $balance = InventoryBalance::where('warehouse_id', $validated['warehouse_id'])
-                    ->where('product_id', $line['product']->id)
-                    ->lockForUpdate()
-                    ->first();
-
-                if (! $balance) {
-                    $balance = InventoryBalance::create([
-                        'warehouse_id' => $validated['warehouse_id'],
-                        'product_id' => $line['product']->id,
-                        'quantity' => 0,
-                        'average_unit_cost' => 0,
-                    ]);
-                    $balance = InventoryBalance::whereKey($balance->id)
-                        ->lockForUpdate()
-                        ->first();
-                }
-
-                $oldQuantity = (float) $balance->quantity;
-                $oldAverageCost = (float) $balance->average_unit_cost;
-                $newQuantity = $oldQuantity + $line['quantity'];
-
-                // Inventory average cost is stored in AFN.
-                $newAverageCost = $newQuantity > 0
-                    ? (
-                        ($oldQuantity * $oldAverageCost)
-                        + ($line['quantity'] * $effectiveUnitCostAfn)
-                    ) / $newQuantity
-                    : 0;
-
-                $balance->update([
-                    'quantity' => $newQuantity,
-                    'average_unit_cost' => round($newAverageCost, 6),
                 ]);
 
                 $movement = InventoryMovement::create([
@@ -262,6 +256,14 @@ $batch = ProductBatch::create([
     'source_id' => $purchase->id,
     'created_by' => $request->user()->id,
 ]);
+
+$stock['batches']->push($batch);
+$inventoryBatchService->syncBalance(
+    $stock['balance'],
+    $validated['warehouse_id'],
+    $line['product']->id,
+    $stock['batches'],
+);
 
 InventoryMovementBatch::create([
     'inventory_movement_id' => $movement->id,

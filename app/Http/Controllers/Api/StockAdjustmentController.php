@@ -3,12 +3,14 @@
 namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
-use App\Models\InventoryBalance;
 use App\Models\InventoryMovement;
+use App\Models\InventoryMovementBatch;
 use App\Models\Product;
+use App\Models\ProductBatch;
 use App\Models\StockAdjustment;
 use App\Models\StockAdjustmentItem;
 use App\Models\Warehouse;
+use App\Services\InventoryBatchService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\Rule;
@@ -32,7 +34,10 @@ class StockAdjustmentController extends Controller
         ]);
     }
 
-    public function store(Request $request)
+    public function store(
+        Request $request,
+        InventoryBatchService $inventoryBatchService
+    )
     {
         $validated = $request->validate([
             'warehouse_id' => [
@@ -74,6 +79,9 @@ class StockAdjustmentController extends Controller
                 'decimal:0,6',
             ],
 
+            'items.*.batch_number' => ['nullable', 'string', 'max:100'],
+            'items.*.expiry_date' => ['nullable', 'date_format:Y-m-d'],
+
             'items.*.reason' => [
                 'required',
                 'string',
@@ -98,7 +106,10 @@ class StockAdjustmentController extends Controller
             }
         }
 
-        $adjustment = DB::transaction(function () use ($validated) {
+        $adjustment = DB::transaction(function () use (
+            $validated,
+            $inventoryBatchService
+        ) {
 
             $warehouse = Warehouse::whereKey($validated['warehouse_id'])
                 ->whereNull('deleted_at')
@@ -138,69 +149,36 @@ class StockAdjustmentController extends Controller
                     ]);
                 }
 
-                $balance = InventoryBalance::where(
-                    'warehouse_id',
-                    $warehouse->id
-                )
-                    ->where('product_id', $product->id)
-                    ->lockForUpdate()
-                    ->first();
-
-                if (!$balance) {
-                    $balance = InventoryBalance::create([
-                        'warehouse_id' => $warehouse->id,
-                        'product_id' => $product->id,
-                        'quantity' => 0,
-                        'average_unit_cost' => 0,
-                    ]);
-                }
-
-                $currentQuantity = (float) $balance->quantity;
-                $currentAverageCost = (float) $balance->average_unit_cost;
+                $stock = $inventoryBatchService->lockStock(
+                    $warehouse->id,
+                    $product->id,
+                );
                 $quantity = (float) $item['quantity'];
+                $allocations = [];
 
                 if ($item['adjustment_type'] === 'increase') {
-
                     $unitCost = (float) $item['unit_cost_afn'];
-
-                    $newQuantity = $currentQuantity + $quantity;
-
-                    $newAverageCost = $newQuantity > 0
-                        ? (
-                            ($currentQuantity * $currentAverageCost)
-                            + ($quantity * $unitCost)
-                        ) / $newQuantity
-                        : $unitCost;
-
+                    $totalCost = round($quantity * $unitCost, 4);
                     $movementType = 'adjustment_in';
                     $quantityIn = $quantity;
                     $quantityOut = 0;
-
                 } else {
-
-                    if ($quantity > $currentQuantity) {
-                        throw ValidationException::withMessages([
-                            'items' =>
-                                "Insufficient stock for product {$product->name}. Available: {$currentQuantity}.",
-                        ]);
-                    }
-
-                    $unitCost = $currentAverageCost;
-
-                    $newQuantity = $currentQuantity - $quantity;
-                    $newAverageCost = $currentAverageCost;
-
+                    $allocations = $inventoryBatchService->allocate(
+                        $stock['batches'],
+                        $quantity,
+                        "Insufficient batch stock for product {$product->name}.",
+                    );
+                    $totalCost = round(
+                        array_sum(array_column($allocations, 'total_cost_afn')),
+                        4,
+                    );
+                    $unitCost = $quantity > 0
+                        ? round($totalCost / $quantity, 6)
+                        : 0;
                     $movementType = 'adjustment_out';
                     $quantityIn = 0;
                     $quantityOut = $quantity;
                 }
-
-                $totalCost = $quantity * $unitCost;
-
-                $balance->update([
-                    'quantity' => round($newQuantity, 4),
-                    'average_unit_cost' => round($newAverageCost, 6),
-                ]);
 
                 StockAdjustmentItem::create([
                     'stock_adjustment_id' => $adjustment->id,
@@ -213,7 +191,7 @@ class StockAdjustmentController extends Controller
                     'notes' => $item['notes'] ?? null,
                 ]);
 
-                InventoryMovement::create([
+                $movement = InventoryMovement::create([
                     'warehouse_id' => $warehouse->id,
                     'product_id' => $product->id,
                     'movement_type' => $movementType,
@@ -229,6 +207,49 @@ class StockAdjustmentController extends Controller
                         (!empty($item['notes']) ? ' - ' . $item['notes'] : ''),
                     'created_by' => auth()->id(),
                 ]);
+
+                if ($item['adjustment_type'] === 'increase') {
+                    $batch = ProductBatch::create([
+                        'product_id' => $product->id,
+                        'warehouse_id' => $warehouse->id,
+                        'batch_number' => $item['batch_number'] ?? null,
+                        'expiry_date' => $item['expiry_date'] ?? null,
+                        'received_quantity' => $quantity,
+                        'remaining_quantity' => $quantity,
+                        'unit_cost_afn' => round($unitCost, 6),
+                        'source_type' => StockAdjustment::class,
+                        'source_id' => $adjustment->id,
+                        'created_by' => auth()->id(),
+                    ]);
+                    $stock['batches']->push($batch);
+
+                    InventoryMovementBatch::create([
+                        'inventory_movement_id' => $movement->id,
+                        'product_batch_id' => $batch->id,
+                        'direction' => 'in',
+                        'quantity' => $quantity,
+                        'unit_cost_afn' => round($unitCost, 6),
+                        'total_cost_afn' => round($totalCost, 4),
+                    ]);
+                } else {
+                    foreach ($allocations as $allocation) {
+                        InventoryMovementBatch::create([
+                            'inventory_movement_id' => $movement->id,
+                            'product_batch_id' => $allocation['batch']->id,
+                            'direction' => 'out',
+                            'quantity' => $allocation['quantity'],
+                            'unit_cost_afn' => $allocation['unit_cost_afn'],
+                            'total_cost_afn' => $allocation['total_cost_afn'],
+                        ]);
+                    }
+                }
+
+                $inventoryBatchService->syncBalance(
+                    $stock['balance'],
+                    $warehouse->id,
+                    $product->id,
+                    $stock['batches'],
+                );
             }
 
             return $adjustment;

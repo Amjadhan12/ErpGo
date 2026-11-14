@@ -3,17 +3,16 @@
 namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
-use App\Models\InventoryBalance;
 use App\Models\InventoryMovement;
 use App\Models\Product;
 use App\Models\StockWastage;
 use App\Models\StockWastageItem;
 use App\Models\Warehouse;
 use Illuminate\Http\Request;
-use App\Models\ProductBatch;
 use App\Models\InventoryMovementBatch;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
+use App\Services\InventoryBatchService;
 
 class StockWastageController extends Controller
 {
@@ -51,7 +50,10 @@ class StockWastageController extends Controller
         );
     }
 
-    public function store(Request $request)
+    public function store(
+        Request $request,
+        InventoryBatchService $inventoryBatchService
+    )
     {
         $validated = $request->validate([
             'warehouse_id' => [
@@ -82,9 +84,14 @@ class StockWastageController extends Controller
             'items.*.notes' => ['nullable', 'string'],
         ]);
 
-        return DB::transaction(function () use ($validated, $request) {
+        return DB::transaction(function () use (
+            $validated,
+            $request,
+            $inventoryBatchService
+        ) {
 
             $warehouse = Warehouse::whereKey($validated['warehouse_id'])
+                ->where('is_active', true)
                 ->lockForUpdate()
                 ->first();
 
@@ -107,6 +114,7 @@ class StockWastageController extends Controller
             foreach ($validated['items'] as $item) {
 
                 $product = Product::whereKey($item['product_id'])
+                    ->where('is_active', true)
                     ->lockForUpdate()
                     ->first();
 
@@ -116,87 +124,33 @@ class StockWastageController extends Controller
                     ]);
                 }
 
-                $balance = InventoryBalance::where(
-                    'warehouse_id',
-                    $warehouse->id
-                )
-                    ->where('product_id', $product->id)
-                    ->lockForUpdate()
-                    ->first();
+                $stock = $inventoryBatchService->lockStock(
+                    $warehouse->id,
+                    $product->id,
+                );
+                $quantity = round((float) $item['quantity'], 4);
+                $balanceAvailable = (float) ($stock['balance']?->quantity ?? 0);
 
-                if (!$balance) {
+                if ($balanceAvailable + 0.00005 < $quantity) {
                     throw ValidationException::withMessages([
                         'items' => [
-                            "No stock balance found for product {$product->id}.",
+                            "Insufficient stock for product {$product->id}. Available: {$balanceAvailable}",
                         ],
                     ]);
                 }
 
-                $quantity = (float) $item['quantity'];
-               $balanceAvailable = (float) $balance->quantity;
+                // Expired lots remain eligible for wastage and sort before later-expiring stock.
+                $allocations = $inventoryBatchService->allocate(
+                    $stock['batches'],
+                    $quantity,
+                    "Insufficient batch stock for product {$product->id}.",
+                );
+                $totalCost = round(
+                    array_sum(array_column($allocations, 'total_cost_afn')),
+                    4,
+                );
+                $unitCost = round($totalCost / $quantity, 6);
 
-              if ($balanceAvailable < $quantity) {
-    throw ValidationException::withMessages([
-        'items' => [
-            "Insufficient stock for product {$product->id}. Available: {$balanceAvailable}",
-        ],
-    ]);
-}
-              
-// Get batches in FEFO order.
-// Expired batches are also included because this is stock wastage.
-$batches = ProductBatch::where('product_id', $product->id)
-    ->where('warehouse_id', $warehouse->id)
-    ->where('remaining_quantity', '>', 0)
-    ->orderByRaw('CASE WHEN expiry_date IS NULL THEN 1 ELSE 0 END')
-    ->orderBy('expiry_date')
-    ->orderBy('id')
-    ->lockForUpdate()
-    ->get();
-
-$batchAvailable = (float) $batches->sum('remaining_quantity');
-
-if ($batchAvailable < $quantity) {
-    throw ValidationException::withMessages([
-        'items' => [
-            "Insufficient batch stock for product {$product->id}. Available: {$batchAvailable}",
-        ],
-    ]);
-}
-
-// Allocate wastage quantity from batches.
-$remainingToAllocate = $quantity;
-$totalCost = 0;
-$allocations = [];
-
-foreach ($batches as $batch) {
-    if ($remainingToAllocate <= 0) {
-        break;
-    }
-
-    $batchAvailableQty = (float) $batch->remaining_quantity;
-$allocatedQty = min($batchAvailableQty, $remainingToAllocate);
-    
-    $batchUnitCost = (float) $batch->unit_cost_afn;
-    $batchTotalCost = round($allocatedQty * $batchUnitCost, 4);
-
-    $allocations[] = [
-        'batch' => $batch,
-        'quantity' => $allocatedQty,
-        'unit_cost_afn' => $batchUnitCost,
-        'total_cost_afn' => $batchTotalCost,
-    ];
-
-    $totalCost += $batchTotalCost;
-    $remainingToAllocate -= $allocatedQty;
-}
-
-$totalCost = round($totalCost, 4);
-$unitCost = round($totalCost / $quantity, 6);
-
-
-                $balance->quantity = round($balanceAvailable - $quantity, 4);
-$balance->save();
 
                 StockWastageItem::create([
                     'stock_wastage_id' => $wastage->id,
@@ -223,27 +177,23 @@ $balance->save();
                     'created_by' => $request->user()->id,
                 ]);
 
-// Deduct quantities from batches and record movement allocations.
-foreach ($allocations as $allocation) {
-    $batch = $allocation['batch'];
+                foreach ($allocations as $allocation) {
+                    InventoryMovementBatch::create([
+                        'inventory_movement_id' => $movement->id,
+                        'product_batch_id' => $allocation['batch']->id,
+                        'direction' => 'out',
+                        'quantity' => $allocation['quantity'],
+                        'unit_cost_afn' => $allocation['unit_cost_afn'],
+                        'total_cost_afn' => $allocation['total_cost_afn'],
+                    ]);
+                }
 
-    $batch->update([
-        'remaining_quantity' => round(
-            (float) $batch->remaining_quantity
-                - $allocation['quantity'],
-            4
-        ),
-    ]);
-
-  InventoryMovementBatch::create([
-    'inventory_movement_id' => $movement->id,
-    'product_batch_id' => $batch->id,
-    'direction' => 'out',
-    'quantity' => $allocation['quantity'],
-    'unit_cost_afn' => $allocation['unit_cost_afn'],
-    'total_cost_afn' => $allocation['total_cost_afn'],
-]);
-}
+                $inventoryBatchService->syncBalance(
+                    $stock['balance'],
+                    $warehouse->id,
+                    $product->id,
+                    $stock['batches'],
+                );
 
             }
 
