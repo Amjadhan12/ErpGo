@@ -377,6 +377,12 @@ class InventoryBatchConsistencyTest extends TestCase
             ]],
         ])->assertCreated();
 
+        $this->getJson('/api/stock-wastages')
+            ->assertOk()
+            ->assertJsonPath('data.0.items.0.batch_allocations.0.batch_number', 'WASTE-EXPIRED')
+            ->assertJsonPath('data.0.items.0.batch_allocations.0.quantity', 2)
+            ->assertJsonPath('data.0.items.0.batch_allocations.1.batch_number', 'WASTE-VALID');
+
         $this->assertSame(0.0, (float) ProductBatch::where('batch_number', 'WASTE-EXPIRED')->firstOrFail()->remaining_quantity);
         $this->assertSame(2.0, (float) ProductBatch::where('batch_number', 'WASTE-VALID')->firstOrFail()->remaining_quantity);
         $this->assertStockConsistent($this->warehouse, $product);

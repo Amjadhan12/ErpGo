@@ -10,6 +10,7 @@ use App\Models\StockWastageItem;
 use App\Models\Warehouse;
 use Illuminate\Http\Request;
 use App\Models\InventoryMovementBatch;
+use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
 use App\Services\InventoryBatchService;
@@ -45,9 +46,10 @@ class StockWastageController extends Controller
             });
         }
 
-        return response()->json(
-            $query->latest('wastage_date')->paginate(20)
-        );
+        $wastages = $query->latest('wastage_date')->paginate(20);
+        $this->attachBatchAllocations($wastages->getCollection());
+
+        return response()->json($wastages);
     }
 
     public function store(
@@ -211,12 +213,42 @@ class StockWastageController extends Controller
 
     public function show(StockWastage $stockWastage)
     {
-        return response()->json([
-            'data' => $stockWastage->load([
-                'warehouse',
-                'creator',
-                'items.product',
-            ]),
-        ]);
+        $stockWastage->load(['warehouse', 'creator', 'items.product']);
+        $this->attachBatchAllocations(collect([$stockWastage]));
+
+        return response()->json(['data' => $stockWastage]);
+    }
+
+    private function attachBatchAllocations(Collection $wastages): void
+    {
+        if ($wastages->isEmpty()) {
+            return;
+        }
+
+        $movements = InventoryMovement::with('batchDetails.productBatch')
+            ->where('reference_type', 'stock_wastage')
+            ->whereIn('reference_id', $wastages->pluck('id'))
+            ->get()
+            ->groupBy('reference_id');
+
+        foreach ($wastages as $wastage) {
+            $byProduct = $movements->get($wastage->id, collect())
+                ->keyBy('product_id');
+
+            foreach ($wastage->items as $item) {
+                $movement = $byProduct->get($item->product_id);
+                $item->setAttribute('batch_allocations', $movement
+                    ? $movement->batchDetails->map(function ($allocation) {
+                        $batch = $allocation->productBatch;
+
+                        return [
+                            'batch_number' => $batch?->batch_number,
+                            'expiry_date' => $batch?->expiry_date?->toDateString(),
+                            'quantity' => (float) $allocation->quantity,
+                        ];
+                    })->values()
+                    : collect());
+            }
+        }
     }
 }
