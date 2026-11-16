@@ -129,7 +129,28 @@ class BusinessPartnerController extends Controller
             'is_active' => ['sometimes', 'boolean'],
         ]);
 
-        $businessPartner->update($validated);
+        DB::transaction(function () use ($businessPartner, $validated): void {
+            if (array_key_exists('is_active', $validated)) {
+                $validated['is_active'] = filter_var(
+                    $validated['is_active'],
+                    FILTER_VALIDATE_BOOLEAN
+                );
+            }
+
+            $businessPartner->update($validated);
+
+            if (array_key_exists('is_active', $validated)) {
+                $linkedUser = $businessPartner->user;
+
+                if ($linkedUser) {
+                    $linkedUser->update(['is_active' => $validated['is_active']]);
+
+                    if (!$validated['is_active']) {
+                        $linkedUser->tokens()->delete();
+                    }
+                }
+            }
+        });
 
         return response()->json([
             'message' => 'Business partner updated successfully.',
@@ -139,16 +160,26 @@ class BusinessPartnerController extends Controller
 
     public function destroy(BusinessPartner $businessPartner): JsonResponse
     {
-        if ($businessPartner->openingBalances()->exists()) {
+        return DB::transaction(function () use ($businessPartner): JsonResponse {
+            if ($businessPartner->openingBalances()->exists()) {
+                return response()->json([
+                    'message' => 'This partner has opening balances and cannot be deleted. Deactivate it instead.',
+                ], 422);
+            }
+
+            $linkedUser = $businessPartner->user;
+
+            if ($linkedUser) {
+                $linkedUser->update(['is_active' => false]);
+                $linkedUser->tokens()->delete();
+            }
+
+            $businessPartner->update(['is_active' => false]);
+            $businessPartner->delete();
+
             return response()->json([
-                'message' => 'This partner has opening balances and cannot be deleted. Deactivate it instead.',
-            ], 422);
-        }
-
-        $businessPartner->delete();
-
-        return response()->json([
-            'message' => 'Business partner deleted successfully.',
-        ]);
+                'message' => 'Business partner deleted successfully.',
+            ]);
+        });
     }
 }
