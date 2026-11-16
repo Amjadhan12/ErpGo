@@ -5,6 +5,7 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Route;
 use App\Http\Controllers\Api\OpeningBalanceController;
 use App\Http\Controllers\Api\BusinessPartnerController;
+use App\Http\Controllers\Api\BusinessPartnerDocumentController;
 use App\Http\Controllers\Api\BusinessPartnerStatementController;
 use App\Http\Controllers\Api\PartnerOpeningBalanceController;
 use App\Http\Controllers\Api\PartnerBalanceReportController;
@@ -181,6 +182,7 @@ Route::middleware(['auth:sanctum', 'role:Secretary'])
         Route::get('/', [BusinessPartnerController::class, 'index']);
         Route::post('/', [BusinessPartnerController::class, 'store']);
         Route::get('/{businessPartner}/statement', [BusinessPartnerStatementController::class, 'show']);
+        Route::get('/{businessPartner}/documents/{section}', [BusinessPartnerDocumentController::class, 'index']);
         Route::get('/{businessPartner}', [BusinessPartnerController::class, 'show']);
         Route::put('/{businessPartner}', [BusinessPartnerController::class, 'update']);
         Route::patch('/{businessPartner}', [BusinessPartnerController::class, 'update']);
