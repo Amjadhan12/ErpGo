@@ -240,6 +240,11 @@ Route::middleware(['auth:sanctum', 'role:Secretary'])
         '/financial-accounts',
         [FinancialAccountController::class, 'store']
     );
+Route::middleware(['auth:sanctum', 'role:Secretary'])
+    ->patch(
+        '/financial-accounts/{financialAccount}/status',
+        [FinancialAccountController::class, 'updateStatus']
+    );
     // Secretary-only inventory report
 Route::middleware(['auth:sanctum', 'role:Secretary'])
     ->get(

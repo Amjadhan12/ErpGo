@@ -79,6 +79,17 @@ class WarehouseController extends Controller
             'is_active' => ['sometimes', 'boolean'],
         ]);
 
+        if (
+            $warehouse->is_active
+            && array_key_exists('is_active', $validated)
+            && ! $validated['is_active']
+            && $this->hasStock($warehouse)
+        ) {
+            return response()->json([
+                'message' => 'This warehouse cannot be deactivated because it still has stock.',
+            ], 422);
+        }
+
         $warehouse->update($validated);
 
         return response()->json([
@@ -89,11 +100,7 @@ class WarehouseController extends Controller
 
     public function deactivate(Warehouse $warehouse): JsonResponse
     {
-        $hasStock = $warehouse->inventoryBalances()
-            ->where('quantity', '>', 0)
-            ->exists();
-
-        if ($hasStock) {
+        if ($this->hasStock($warehouse)) {
             return response()->json([
                 'message' => 'This warehouse cannot be deactivated because it still has stock.',
             ], 422);
@@ -107,5 +114,12 @@ class WarehouseController extends Controller
             'message' => 'Warehouse deactivated successfully.',
             'data' => $warehouse->fresh(),
         ]);
+    }
+
+    private function hasStock(Warehouse $warehouse): bool
+    {
+        return $warehouse->inventoryBalances()
+            ->where('quantity', '>', 0)
+            ->exists();
     }
 }

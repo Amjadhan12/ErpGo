@@ -86,4 +86,11 @@ class CurrencyController extends Controller
             'data' => $currency->fresh(),
         ]);
     }
+
+    public function destroy(Currency $currency): JsonResponse
+    {
+        return response()->json([
+            'message' => 'Currencies cannot be deleted because financial and inventory history may reference them. Deactivate the currency instead.',
+        ], 422);
+    }
 }

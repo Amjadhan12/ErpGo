@@ -16,7 +16,10 @@ class FinancialAccountController extends Controller
     {
         $accounts = FinancialAccount::query()
             ->with('currency')
-            ->where('is_active', true)
+            ->when(
+                ! $request->boolean('include_inactive'),
+                fn ($query) => $query->where('is_active', true)
+            )
             ->when(
                 $request->filled('currency_id'),
                 fn ($query) => $query->where(
@@ -46,6 +49,7 @@ class FinancialAccountController extends Controller
             return [
                 'id' => $account->id,
                 'name' => $account->name,
+                'is_active' => $account->is_active,
                 'account_type' => $account->account_type,
                 'holder_type' => $account->holder_type,
 
@@ -103,5 +107,21 @@ class FinancialAccountController extends Controller
             'message' => 'Financial account created successfully.',
             'data' => $account->load('currency'),
         ], 201);
+    }
+
+    public function updateStatus(Request $request, FinancialAccount $financialAccount): JsonResponse
+    {
+        $validated = $request->validate([
+            'is_active' => ['required', 'boolean'],
+        ]);
+
+        $financialAccount->update([
+            'is_active' => $validated['is_active'],
+        ]);
+
+        return response()->json([
+            'message' => 'Financial account status updated successfully.',
+            'data' => $financialAccount->fresh()->load('currency'),
+        ]);
     }
 }

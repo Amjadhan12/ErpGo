@@ -78,4 +78,43 @@ class WarehouseReactivationTest extends TestCase
 
         $this->assertTrue($warehouse->fresh()->is_active);
     }
+
+    public function test_warehouse_update_cannot_bypass_positive_stock_deactivation_guard(): void
+    {
+        $warehouse = Warehouse::create([
+            'name' => 'Warehouse Update Guard Test',
+            'is_active' => true,
+        ]);
+        $category = ProductCategory::create([
+            'name' => 'Warehouse Update Guard Category',
+            'is_active' => true,
+        ]);
+        $product = Product::create([
+            'product_category_id' => $category->id,
+            'name' => 'Warehouse Update Guard Product',
+            'product_type' => 'goods',
+            'unit' => 'piece',
+            'minimum_stock' => 0,
+            'is_active' => true,
+        ]);
+        InventoryBalance::create([
+            'warehouse_id' => $warehouse->id,
+            'product_id' => $product->id,
+            'quantity' => 1,
+        ]);
+
+        $this->putJson("/api/warehouses/{$warehouse->id}", [
+            'name' => $warehouse->name,
+            'location' => $warehouse->location,
+            'description' => $warehouse->description,
+            'is_active' => false,
+        ])
+            ->assertUnprocessable()
+            ->assertJsonPath(
+                'message',
+                'This warehouse cannot be deactivated because it still has stock.',
+            );
+
+        $this->assertTrue($warehouse->fresh()->is_active);
+    }
 }
