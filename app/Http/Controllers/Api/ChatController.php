@@ -8,6 +8,7 @@ use App\Models\ChatMessage;
 use App\Models\User;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Str;
 
 class ChatController extends Controller
 {
@@ -176,6 +177,87 @@ class ChatController extends Controller
             'message' => 'Unread messages count retrieved successfully.',
             'data' => [
                 'unread_count' => $count,
+            ],
+        ]);
+    }
+
+    public function notifications(Request $request): JsonResponse
+    {
+        $user = $request->user();
+        $unreadCount = ChatMessage::where('recipient_id', $user->id)
+            ->whereNull('read_at')
+            ->count();
+
+        if ($user->role === 'Secretary') {
+            $latestUnreadIds = ChatMessage::query()
+                ->join('business_partners', 'business_partners.id', '=', 'chat_messages.business_partner_id')
+                ->join('users as chat_senders', 'chat_senders.id', '=', 'chat_messages.sender_id')
+                ->where('chat_messages.recipient_id', $user->id)
+                ->whereNull('chat_messages.read_at')
+                ->whereNull('business_partners.deleted_at')
+                ->whereIn('business_partners.partner_type', ['Customer', 'Supplier'])
+                ->whereColumn('chat_senders.business_partner_id', 'chat_messages.business_partner_id')
+                ->whereColumn('business_partners.partner_type', 'chat_senders.role')
+                ->selectRaw('MAX(chat_messages.id) as id')
+                ->groupBy('chat_messages.business_partner_id');
+        } elseif (in_array($user->role, ['Customer', 'Supplier'], true)) {
+            $partner = $user->businessPartner;
+
+            if (
+                !$partner ||
+                !$partner->is_active ||
+                $partner->partner_type !== $user->role
+            ) {
+                return response()->json([
+                    'message' => 'Your business partner account is invalid.',
+                ], 403);
+            }
+
+            $latestUnreadIds = ChatMessage::query()
+                ->join('business_partners', 'business_partners.id', '=', 'chat_messages.business_partner_id')
+                ->join('users as chat_senders', 'chat_senders.id', '=', 'chat_messages.sender_id')
+                ->where('chat_messages.recipient_id', $user->id)
+                ->whereNull('chat_messages.read_at')
+                ->whereNull('business_partners.deleted_at')
+                ->where('business_partners.id', $partner->id)
+                ->where('business_partners.partner_type', $user->role)
+                ->where('business_partners.is_active', true)
+                ->where('chat_senders.role', 'Secretary')
+                ->selectRaw('MAX(chat_messages.id) as id')
+                ->groupBy('chat_messages.business_partner_id');
+        } else {
+            return response()->json([
+                'message' => 'You are not authorized to view chat notifications.',
+            ], 403);
+        }
+
+        $notifications = ChatMessage::with([
+            'businessPartner:id,name,partner_type',
+            'sender:id,name,role',
+        ])
+            ->whereIn('id', $latestUnreadIds)
+            ->orderByDesc('created_at')
+            ->orderByDesc('id')
+            ->get()
+            ->map(fn (ChatMessage $message): array => [
+                'id' => (int) $message->id,
+                'business_partner_id' => (int) $message->business_partner_id,
+                'partner_name' => $message->businessPartner->name,
+                'partner_type' => $message->businessPartner->partner_type,
+                'sender' => [
+                    'id' => (int) $message->sender->id,
+                    'name' => $message->sender->name,
+                    'role' => $message->sender->role,
+                ],
+                'message' => Str::limit($message->message, 160),
+                'created_at' => $message->created_at->toISOString(),
+            ])
+            ->values();
+
+        return response()->json([
+            'data' => [
+                'unread_count' => $unreadCount,
+                'notifications' => $notifications,
             ],
         ]);
     }

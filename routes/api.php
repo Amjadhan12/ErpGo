@@ -362,4 +362,6 @@ Route::middleware(['auth:sanctum'])
 
         Route::get('/unread-count', 'unreadCount');
 
+        Route::get('/notifications', 'notifications');
+
     });
